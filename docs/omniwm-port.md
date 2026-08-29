@@ -140,9 +140,14 @@ this directory. Version-critical reconciliation:
 4. **No move-window-by-id IPC** — `command move-to-workspace` acts on
    the focused window only; external tooling must focus-then-move
    (racy). Feature ask: `window move-to-workspace <id> <ws>`.
-5. **active-workspace events skip empty-workspace switches in bursts**
-   — focus-name returns `executed`, no event arrives; consumers'
-   state freezes. (The pill saga's final bug.)
+5. **active-workspace (and focus) events fire only when the focused
+   WINDOW changes** — measured 2026-08-29: the sequence 14,2,9,2,3,2
+   emitted events for 3 and 2 only; every switch to OR from an empty
+   workspace is silent, not just in bursts. handleSessionStateChanged's
+   workspaceChanged is derived from window state. The `workspace-bar`
+   channel does fire on every switch (their bar highlights empties), so
+   omacosy-bar consumes that instead. Feature ask: emit
+   active-workspace on the workspace change itself.
 6. **Dwindle has no mouse move/swap** — MouseEventHandler's dwindle
    path guards button == .right (resize only); Option+drag move is
    Niri-only.

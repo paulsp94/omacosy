@@ -2644,36 +2644,69 @@ watch(wsPath, create: true) {
 var omniWatch: Process?
 var omniWatchBuffer = Data()
 
-func omniActiveWorkspaceEvent(_ line: Data) {
+func omniWorkspaceBarEvent(_ line: Data) {
+    // The workspace-bar channel, not active-workspace: measured 2026-08-29,
+    // active-workspace (and focus) only fire when the FOCUSED WINDOW
+    // changes, so every switch to or from an EMPTY workspace is silent —
+    // OmniWM's own Super+8/9 left the pill frozen. Their bar highlights
+    // empties, so its scene channel fires on every switch, and carries
+    // per-monitor active flags plus each workspace's windows (occupancy
+    // and the sole-app icon come free, no windows query).
     guard let root = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-          root["channel"] as? String == "active-workspace",
+          root["channel"] as? String == "workspace-bar",
           let payload = (root["result"] as? [String: Any])?["payload"] as? [String: Any],
-          let ws = (payload["workspace"] as? [String: Any])?["rawName"] as? String,
-          !ws.isEmpty
+          let monitors = payload["monitors"] as? [[String: Any]]
     else { return }
-    let monitor = (payload["display"] as? [String: Any])?["id"] as? String ?? ""
+    let current = payload["interactionMonitorId"] as? String ?? ""
     let t0 = DispatchTime.now().uptimeNanoseconds
     var changed = false
-    if model.focused != ws { model.focused = ws; changed = true }
-    // the event names its monitor, so the surface is picked by id rather
-    // than by which set the workspace sits in — OmniWM can route any
-    // workspace to any monitor
-    for surface in surfaces where surface.monitorID == monitor && surface.visible != ws {
-        surface.visible = ws
-        changed = true
+    var occupied = Set<String>()
+    var sole: [String: String] = [:]
+    var focusedNow = ""
+    for m in monitors {
+        guard let id = m["id"] as? String,
+              let list = m["workspaces"] as? [[String: Any]] else { continue }
+        var active = ""
+        for w in list {
+            guard let name = w["rawName"] as? String else { continue }
+            if (w["isFocused"] as? Bool) == true { active = name }
+            let wins = (w["windows"] as? [[String: Any]]) ?? []
+            if !wins.isEmpty {
+                occupied.insert(name)
+                let apps = Set(wins.compactMap { $0["appName"] as? String })
+                if apps.count == 1, let app = apps.first { sole[name] = app }
+            }
+        }
+        guard !active.isEmpty else { continue }
+        if id == current { focusedNow = active }
+        for surface in surfaces where surface.monitorID == id && surface.visible != active {
+            surface.visible = active
+            changed = true
+        }
     }
+    if !focusedNow.isEmpty, model.focused != focusedNow { model.focused = focusedNow; changed = true }
+    if model.occupied != occupied { model.occupied = occupied; changed = true }
+    if model.soleApp != sole { model.soleApp = sole; changed = true }
     guard changed else { return }
     repaint()
     kickVisibility()
-    tlog(String(format: "switch %@ %.2f ms (omniwm)", ws,
+    tlog(String(format: "switch %@ %.2f ms (omniwm)", focusedNow,
                 Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000))
 }
 
 func startOmniWatch() {
     guard omniWatch == nil, omniwmActive() else { return }
+    // a bar killed by launchd (kickstart -k is SIGKILL) leaves its
+    // stream child alive under pid 1, one per restart — reap orphans
+    // before spawning ours; -P 1 cannot touch a living bar's child
+    let reap = Process()
+    reap.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+    reap.arguments = ["-P", "1", "-f", "omniwmctl watch workspace-bar"]
+    try? reap.run()
+    reap.waitUntilExit()
     let p = Process()
     p.executableURL = URL(fileURLWithPath: omniwmctlBin)
-    p.arguments = ["watch", "active-workspace", "--exec", "/bin/cat"]
+    p.arguments = ["watch", "workspace-bar", "--exec", "/bin/cat"]
     let pipe = Pipe()
     p.standardOutput = pipe
     p.standardError = FileHandle.nullDevice
@@ -2685,7 +2718,7 @@ func startOmniWatch() {
             while let nl = omniWatchBuffer.firstIndex(of: 0x0A) {
                 let line = Data(omniWatchBuffer[omniWatchBuffer.startIndex..<nl])
                 omniWatchBuffer = Data(omniWatchBuffer[omniWatchBuffer.index(after: nl)...])
-                omniActiveWorkspaceEvent(line)
+                omniWorkspaceBarEvent(line)
             }
         }
     }
@@ -2702,7 +2735,7 @@ func startOmniWatch() {
     }
     guard (try? p.run()) != nil else { return }
     omniWatch = p
-    tlog("omniwm: watching active-workspace")
+    tlog("omniwm: watching workspace-bar")
 }
 
 func stopOmniWatch() {

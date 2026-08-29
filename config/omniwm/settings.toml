@@ -222,14 +222,12 @@ minHeight = 420.0
 minWidth = 500.0
 
 [[appRules]]
-assignToWorkspace = "17"
 bundleId = "com.spotify.client"
 id = "2DE9390B-0DB4-4D0C-9ABA-06F76F1D4EA9"
 minHeight = 600.0
 minWidth = 800.0
 
 [[appRules]]
-assignToWorkspace = "16"
 bundleId = "com.hnc.Discord"
 id = "AF752D95-8497-4844-BE20-4C93E73BAEF2"
 minHeight = 500.0
@@ -252,16 +250,6 @@ bundleId = "com.apple.MobileSMS"
 id = "552FB77D-BF0E-4737-90A6-B5BC6986C579"
 minHeight = 320.0
 minWidth = 660.0
-
-[[appRules]]
-assignToWorkspace = "14"
-bundleId = "org.whispersystems.signal-desktop"
-id = "2F397572-EFC4-4507-A445-576D76E19041"
-
-[[appRules]]
-assignToWorkspace = "15"
-bundleId = "net.whatsapp.WhatsApp"
-id = "3720737C-A7C5-4F79-8BCB-B91CC805C84F"
 
 [[hotkeys]]
 binding = "Control+Option+Command+1"

@@ -328,32 +328,50 @@ func aerospaceSnapshot(mon: Int) -> (order: [String], wins: [String: [Win]], foc
 // cards.
 func omniwmSnapshot(screenName: String)
     -> (order: [String], wins: [String: [Win]], focused: String, all: [String]) {
+    // three IPC round-trips at ~36 ms each: run them CONCURRENTLY so the
+    // cards fill in one round-trip's time, not three (the aerospace
+    // path is a single 30 ms call and this used to feel slower). The
+    // displays query is also the only reliable source for the visible
+    // workspace — the workspaces query's isVisible/isFocused go dark on
+    // EMPTY workspaces (the bar hit the same trap).
+    var displaysP: [String: Any]?
+    var wsP: [String: Any]?
+    var winP: [String: Any]?
+    let group = DispatchGroup()
+    DispatchQueue.global().async(group: group) { displaysP = omniQuery("displays") }
+    DispatchQueue.global().async(group: group) {
+        wsP = omniQuery("workspaces", ["--fields", "raw-name,display"])
+    }
+    DispatchQueue.global().async(group: group) {
+        winP = omniQuery("windows", ["--fields", "id,workspace,app,title"])
+    }
+    group.wait()
+
     var displayId = ""
-    if let list = omniQuery("displays", ["--fields", "id,name"])?["displays"]
-        as? [[String: Any]] {
-        for d in list where (d["name"] as? String) == screenName {
-            displayId = (d["id"] as? String) ?? ""
+    var focused = "" // the CURRENT display's active workspace
+    var visible = "" // active on THIS monitor
+    if let list = displaysP?["displays"] as? [[String: Any]] {
+        for d in list {
+            let active = (d["activeWorkspace"] as? [String: Any])?["rawName"] as? String ?? ""
+            if (d["name"] as? String) == screenName {
+                displayId = (d["id"] as? String) ?? ""
+                visible = active
+            }
+            if (d["isCurrent"] as? Bool) == true { focused = active }
         }
     }
     var all: [String] = []
-    var focused = "" // globally focused workspace
-    var visible = "" // visible on THIS monitor
-    if let list = omniQuery("workspaces",
-        ["--fields", "raw-name,display,is-visible,is-focused"])?["workspaces"]
-        as? [[String: Any]] {
+    if let list = wsP?["workspaces"] as? [[String: Any]] {
         for w in list {
-            guard let name = w["rawName"] as? String else { continue }
-            if (w["isFocused"] as? Bool) == true { focused = name }
-            guard ((w["display"] as? [String: Any])?["id"] as? String) == displayId
+            guard let name = w["rawName"] as? String,
+                ((w["display"] as? [String: Any])?["id"] as? String) == displayId
             else { continue }
             all.append(name)
-            if (w["isVisible"] as? Bool) == true { visible = name }
         }
     }
     all.sort(by: wsLess)
     var wins: [String: [Win]] = [:]
-    if let list = omniQuery("windows",
-        ["--fields", "id,workspace,app,title"])?["windows"] as? [[String: Any]] {
+    if let list = winP?["windows"] as? [[String: Any]] {
         for w in list {
             guard let opaque = w["id"] as? String,
                 let ws = (w["workspace"] as? [String: Any])?["rawName"] as? String

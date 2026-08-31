@@ -126,6 +126,17 @@ this directory. Version-critical reconciliation:
 - Undocumented gem: system-wide window corner radius via
   NSConvolutionOverride defaults.
 
+## 0.6.4 (re-upgraded 2026-08-31 evening — final)
+
+Back on 0.6.4 for good: its stale-window retirement fix is the cure
+for the Arc phantom-window accumulation that degraded 0.6.3 layouts
+all day (29 ghost windows purged in the same pass). Upgrade procedure
+that works: quit the old process COMPLETELY before touching settings;
+first boot after migration can take >10 s before the IPC socket
+appears — wait for the socket, don't diagnose at 9 s. Window map is
+snapshotted by app name (window ids die with the WM session) and
+restored via focus-by-id + move + verify.
+
 ## 0.6.4 (upgraded 2026-08-31)
 
 Settings migration is automatic now (schemaVersion 1, .pre-v1 backup)

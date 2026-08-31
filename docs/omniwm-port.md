@@ -126,6 +126,15 @@ this directory. Version-critical reconciliation:
 - Undocumented gem: system-wide window corner radius via
   NSConvolutionOverride defaults.
 
+## 0.6.4 (upgraded 2026-08-31)
+
+Settings migration is automatic now (schemaVersion 1, .pre-v1 backup)
+— the 0.6.3 UPGRADE TRAP procedure below is historical. IPC protocol
+went 11 -> 13; our client negotiates per connection since 4bfe5c0's
+follow-up, so future bumps cannot strand the stack. Ten labeled
+scratchpad slots are available and unbound. Rolling back to 0.6.3
+requires restoring settings.toml.pre-v1 first.
+
 ## Upstream issue ledger (file these on BarutSRB/OmniWM)
 
 1. **Dwindle ignores [gaps.outer] on 0.6.3** — resolved settings report

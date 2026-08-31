@@ -1,18 +1,16 @@
-# OmniWM settings for omacosy (branch: omniwm) — FULL canonical file.
-# 0.6.3's decoder is strict: every table complete, every hotkey catalog
-# id present exactly once; a sparse file is silently quarantined to
-# settings.toml.corrupt and replaced with defaults on cold start. This
-# file is the live-tested mirror (2026-08-26). After an OmniWM upgrade
-# adds required keys, follow docs/omniwm-port.md "0.6.3 UPGRADE TRAP":
-# let the new version write defaults, then patch our keys back in.
-# theme-set rewrites [borders.color] per theme; GUI rewrites strip
-# comments — the repo copy is the reference, the live copy is state.
+# OmniWM settings for omacosy — FULL canonical file, schemaVersion 1
+# (0.6.4 migration format). Since 0.6.4, upgrades migrate settings
+# automatically and back up the previous file to settings.toml.pre-v1 —
+# the old 0.6.3 strict-decoder trap is gone. Migration strips comments
+# and reorders tables, so: the repo copy is the reference, the live
+# copy is state; theme-set rewrites [borders.color] per theme. Mirrored
+# from the live, migration-verified file (2026-08-31, OmniWM 0.6.4).
 monitorBarOverrides = []
 monitorDwindleOverrides = []
 monitorGapOverrides = []
 monitorNiriOverrides = []
 monitorOrientationOverrides = []
-monitorRoutingOverrides = []
+schemaVersion = 1
 
 [appearance]
 mode = "dark"
@@ -71,7 +69,7 @@ systemHyperTrigger = "None"
 updateChecksEnabled = false
 
 [gestures]
-fingerCount = 3
+fingerCount = 4
 invertDirection = true
 mouseMoveModifierKey = "option"
 mouseResizeModifierKey = "option"
@@ -80,7 +78,7 @@ scrollModifierKey = "optionShift"
 scrollSensitivity = 5.0
 trackpadScrollStyle = "snap"
 workspaceSwipeAxis = "horizontal"
-workspaceSwipeEnabled = false
+workspaceSwipeEnabled = true
 workspaceSwipeFingerCount = 4
 
 [hiddenBar]
@@ -144,7 +142,11 @@ position = "center"
 widthPercent = 50.0
 
 [routing]
-mode = "macOS"
+mode = "custom"
+
+[scratchpads]
+
+[scratchpads.labels]
 
 [statusBar]
 showAppNames = false
@@ -158,6 +160,7 @@ enabled = false
 excludedBundleIDs = []
 height = 24.0
 hideEmptyWorkspaces = false
+hideInNativeFullscreen = false
 notchActiveZoneWidth = 180.0
 notchMode = "moveBelowMenuBar"
 position = "overlappingMenuBar"
@@ -250,6 +253,86 @@ bundleId = "com.apple.MobileSMS"
 id = "552FB77D-BF0E-4737-90A6-B5BC6986C579"
 minHeight = 320.0
 minWidth = 660.0
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.1"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.1"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.2"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.2"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.3"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.3"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.4"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.4"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.5"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.5"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.6"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.6"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.7"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.7"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.8"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.8"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.9"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.9"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpad.10"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad.10"
 
 [[hotkeys]]
 binding = "Unassigned"
@@ -820,14 +903,6 @@ binding = "Control+Option+Command+T"
 id = "toggleFocusedWindowFloating"
 
 [[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpadWindow"
-
-[[hotkeys]]
 binding = "Control+Option+M"
 id = "openMenuAnywhere"
 
@@ -854,6 +929,18 @@ id = "toggleOverview"
 [[hotkeys]]
 binding = "Unassigned"
 id = "toggleSystemStats"
+
+[[monitorRoutingOverrides]]
+gridColumn = 0
+gridRow = 0
+monitorDisplayUUID = "BEA94EFA-34B6-4B32-A54B-D0415626AA1D"
+monitorName = "DELL P3424WE"
+
+[[monitorRoutingOverrides]]
+gridColumn = 1
+gridRow = 0
+monitorDisplayUUID = "37D8832A-2D66-02CA-B9F7-8F30A301B230"
+monitorName = "Built-in Retina Display"
 
 [[workspaces]]
 id = "006FFC60-64D0-466B-80B2-7A57332DCA5C"
@@ -928,6 +1015,30 @@ name = "9"
 type = "main"
 
 [[workspaces]]
+id = "0D8B61DE-0194-4741-9125-3A24DFCB726E"
+layoutType = "dwindle"
+name = "11"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
+id = "BC08C1CF-6D87-4904-9079-1495631F96C8"
+layoutType = "dwindle"
+name = "12"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
+id = "B0DF8309-EA62-4D0A-92F0-DA111723D023"
+layoutType = "dwindle"
+name = "13"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
 id = "5810E59D-5A68-43AC-9050-AD14721738E8"
 layoutType = "dwindle"
 name = "14"
@@ -960,31 +1071,7 @@ name = "17"
 type = "secondary"
 
 [[workspaces]]
-id = "C0AD1810-71CC-472C-9505-A93669092C60"
-layoutType = "dwindle"
-name = "11"
-
-[workspaces.monitorAssignment]
-type = "secondary"
-
-[[workspaces]]
-id = "C4E0FC16-5C3D-4734-969F-DB6C618736A5"
-layoutType = "dwindle"
-name = "12"
-
-[workspaces.monitorAssignment]
-type = "secondary"
-
-[[workspaces]]
-id = "DE88283D-D177-4524-BDB4-A9B245C93848"
-layoutType = "dwindle"
-name = "13"
-
-[workspaces.monitorAssignment]
-type = "secondary"
-
-[[workspaces]]
-id = "CD5ADCC9-1345-415A-B309-3F2D2C513122"
+id = "549FA193-3198-44A8-8515-34C10F2F04ED"
 layoutType = "dwindle"
 name = "18"
 
@@ -992,7 +1079,7 @@ name = "18"
 type = "secondary"
 
 [[workspaces]]
-id = "0B20A159-4901-43D8-A0AB-F8185FDD14CA"
+id = "0894B020-A5C1-4ECA-8994-740A13E7CEDC"
 layoutType = "dwindle"
 name = "19"
 

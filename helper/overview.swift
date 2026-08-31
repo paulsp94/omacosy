@@ -403,10 +403,14 @@ func omniwmSnapshot(screenName: String)
                 let ws = (w["workspace"] as? [String: Any])?["rawName"] as? String
             else { continue }
             let app = w["app"] as? [String: Any]
-            // OmniWM 0.6.4 manages our bar strips as floating windows
+            // OmniWM 0.6.4 manages our chrome as floating windows
             // (their hands-off fix is at HEAD, not in the release) —
-            // our own chrome is not a card
+            // none of it is a card. The bar has a bundle id; the
+            // overview and helper binaries are unbundled, so the app
+            // NAME prefix is the reliable net (it caught the overview
+            // capturing its own overlay).
             if (app?["bundleId"] as? String)?.hasPrefix("com.omacosy.") == true { continue }
+            if (app?["name"] as? String)?.hasPrefix("omacosy") == true { continue }
             // icons want a bundle PATH; the payload carries a bundle id
             let bundle = ((app?["bundleId"] as? String).flatMap {
                 NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)?.path }) ?? ""

@@ -2753,7 +2753,8 @@ func omniWorkspaceBarEvent(_ line: Data) {
         for w in list {
             guard let name = w["rawName"] as? String else { continue }
             if (w["isFocused"] as? Bool) == true { active = name }
-            let wins = (w["windows"] as? [[String: Any]]) ?? []
+            let wins = ((w["windows"] as? [[String: Any]]) ?? [])
+                .filter { ($0["appName"] as? String) != "omacosy-bar" }
             if !wins.isEmpty {
                 occupied.insert(name)
                 let apps = Set(wins.compactMap { $0["appName"] as? String })

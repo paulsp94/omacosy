@@ -887,7 +887,7 @@ binding = "Unassigned"
 id = "preselectClear"
 
 [[hotkeys]]
-binding = "Control+Option+Space"
+binding = "Unassigned"
 id = "openCommandPalette"
 
 [[hotkeys]]

@@ -163,6 +163,12 @@ requires restoring settings.toml.pre-v1 first.
 7. (cosmetic) **Their border decorates their own command palette** —
    mismatched-radius outline; persists with borders disabled, so
    likely the palette's own edge drawing.
+11. **0.6.4 REGRESSION: singleWindowFit="fill" ignores outer gaps** —
+   a solo dwindle window gets the raw display frame ({0,0,3440,1440}),
+   covering the reserved bar strip; two windows lay out correctly
+   (height 1398, top 42 clear). 0.6.3 respected outer gaps in the solo
+   case. Measured 2026-08-31 on 0.6.4. High priority: most workspaces
+   hold one window.
 9. **Dwindle vertical insertion is top, not bottom** — with smartSplit
    off, planSplit returns newFirst=false ("new is second") and
    splitRect places the first child at minY; frames are y-up, so the

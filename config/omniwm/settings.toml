@@ -479,11 +479,11 @@ binding = "Unassigned"
 id = "centerVisibleColumns"
 
 [[hotkeys]]
-binding = "Control+Option+Shift+Up Arrow"
+binding = "Unassigned"
 id = "moveWindowToWorkspaceUp"
 
 [[hotkeys]]
-binding = "Control+Option+Shift+Down Arrow"
+binding = "Unassigned"
 id = "moveWindowToWorkspaceDown"
 
 [[hotkeys]]

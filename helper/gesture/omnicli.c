@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static int usage(void)
 {
@@ -62,6 +63,48 @@ int main(int argc, char** argv)
 		snprintf(payload, sizeof payload, "{\"name\":\"%s\",\"selectors\":{},\"fields\":[%s]}", argv[2], fields);
 		char* r = omniwm_request(c, "query", payload);
 		if (r) { puts(r); free(r); } else rc = 1;
+	} else if (!strcmp(op, "throw-window") || !strcmp(op, "throw-workspace")) {
+		// aerospace-era semantics: the TWIN slot on the other monitor
+		// (4 <-> 14), so the twin workspace keeps its meaning — never a
+		// whole-workspace move, which conflicts with per-monitor
+		// assignment. throw-window moves the focused window;
+		// throw-workspace walks every window on the current workspace
+		// (focus by id, then move — OmniWM has no move-by-id).
+		char* cur_s = omniwm_active_workspace(c);
+		rc = 1;
+		if (cur_s) {
+			int cur = atoi(cur_s);
+			int twin = cur <= 9 ? cur + 10 : cur - 10;
+			char args[64];
+			snprintf(args, sizeof args, "{\"workspaceNumber\":%d}", twin);
+			if (!strcmp(op, "throw-window")) {
+				rc = omniwm_command(c, "move-to-workspace", args) ? 0 : 1;
+			} else {
+				char* r = omniwm_request(c, "query",
+					"{\"name\":\"windows\",\"selectors\":{},\"fields\":[\"id\",\"workspace\"]}");
+				if (r) {
+					yyjson_doc* d = yyjson_read(r, strlen(r), 0);
+					if (d) {
+						yyjson_val* list = yyjson_obj_get(yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(d), "result"), "payload"), "windows");
+						size_t i, m; yyjson_val* w; rc = 0;
+						yyjson_arr_foreach(list, i, m, w) {
+							const char* ws = yyjson_get_str(yyjson_obj_get(yyjson_obj_get(w, "workspace"), "rawName"));
+							const char* wid = yyjson_get_str(yyjson_obj_get(w, "id"));
+							if (!ws || !wid || atoi(ws) != cur) continue;
+							char fp[256];
+							snprintf(fp, sizeof fp, "{\"name\":\"focus\",\"windowId\":\"%s\"}", wid);
+							char* fr = omniwm_request(c, "window", fp);
+							free(fr);
+							usleep(60000); // focus settle before the move
+							if (!omniwm_command(c, "move-to-workspace", args)) rc = 1;
+						}
+						yyjson_doc_free(d);
+					}
+					free(r);
+				}
+			}
+			free(cur_s);
+		}
 	} else if (!strcmp(op, "window-count")) {
 		int n = omniwm_window_count(c);
 		if (n >= 0) printf("%d\n", n); else rc = 1;

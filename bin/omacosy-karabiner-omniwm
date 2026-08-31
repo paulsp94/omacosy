@@ -59,6 +59,10 @@ rules = [
     # parked — swap the two lines to go back)
     rule("launcher", "spacebar", SUPER, cmd="/opt/homebrew/bin/omniwmctl command open-command-palette >/dev/null 2>&1"),
     rule("overview", "o", SUPER, cmd=f"{home}/.local/bin/omacosy-overview"),
+    # aerospace-era throws: to the OTHER monitor, not a direction —
+    # resolved per-press by omacosy-omni from the display arrangement
+    rule("throw window to other monitor", "o", SHIFT, cmd=f"{home}/.local/bin/omacosy-omni throw-window >/dev/null 2>&1"),
+    rule("throw workspace to other monitor", "spacebar", SHIFT, cmd=f"{home}/.local/bin/omacosy-omni throw-workspace >/dev/null 2>&1"),
     # slot-scoped cycling (1-9 stays 1-9): OmniWM's own next/prev walks
     # the guest workspaces too on a single display
     rule("next workspace", "tab", SUPER, cmd=f"{home}/.local/bin/omacosy-ws next"),

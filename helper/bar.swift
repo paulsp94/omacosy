@@ -1641,10 +1641,44 @@ func prettyOmniKey(_ raw: String) -> String {
     return parts.joined(separator: "+")
 }
 
+// "switchWorkspace.0" -> "switch workspace 1": the raw catalog ids were
+// printed verbatim once, on the theory that the config's truth beats a
+// pretty lie — and read as a mess (0-based suffixes beside 1-based
+// keycaps, camelCase runs). The id's meaning survives; only the casing
+// and indexing are translated to match the keycap next to it.
+func humanizeOmniId(_ id: String) -> String {
+    func words(_ s: String) -> String {
+        var out = ""
+        for ch in s { out.append(ch.isUppercase ? " " + String(ch).lowercased() : String(ch)) }
+        return out.trimmingCharacters(in: .whitespaces)
+    }
+    let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
+    let head = words(parts[0])
+    guard parts.count > 1 else { return head }
+    if let n = Int(parts[1]) { return "\(head) \(n + 1)" }
+    switch parts[1] {
+    case "decrease10Percent": return "\(head) −10%"
+    case "increase10Percent": return "\(head) +10%"
+    default: return "\(head) \(words(parts[1]))"
+    }
+}
+
+// with the comment headings stripped by the strict-decoder rewrite, the
+// sheet gets its sections from the id families instead
+func omniGroup(_ id: String) -> String {
+    let h = String(id.split(separator: ".").first ?? "")
+    if h.lowercased().contains("workspace") { return "Workspaces" }
+    if h.hasPrefix("focus") { return "Focus" }
+    if h.hasPrefix("move") || h.hasPrefix("summon") { return "Move" }
+    if h.contains("Span") || h.hasPrefix("resize") || h.hasPrefix("balance")
+        || h.hasPrefix("cycleSize") || h.hasPrefix("set") { return "Size" }
+    if h.hasPrefix("toggle") || h.contains("Layout") || h.contains("Column")
+        || h.hasPrefix("preselect") || h.contains("olumn") { return "Layout & columns" }
+    return "System"
+}
+
 // [[hotkeys]] tables out of OmniWM's settings.toml: a binding string and
-// an action id per table, in either order. The id IS the description —
-// printed verbatim, including its 0-indexed workspace suffix, because a
-// prettier lie about what the config says defeats the sheet's point.
+// an action id per table, in either order.
 func omniwmCheatEntries() -> [CheatEntry] {
     let path = "\(NSHomeDirectory())/.config/omniwm/settings.toml"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
@@ -1659,7 +1693,9 @@ func omniwmCheatEntries() -> [CheatEntry] {
         // Unassigned. A cheatsheet's job is what you CAN press, so the
         // ~90 unassigned rows stay out (they made the sheet a wall).
         if inHotkey, !binding.isEmpty, binding != "Unassigned", !id.isEmpty {
-            entries.append(CheatEntry(group: group, key: prettyOmniKey(binding), action: id))
+            entries.append(CheatEntry(
+                group: group.isEmpty ? omniGroup(id) : group,
+                key: prettyOmniKey(binding), action: humanizeOmniId(id)))
         }
         binding = ""
         id = ""
@@ -1703,6 +1739,16 @@ func omniwmCheatEntries() -> [CheatEntry] {
         if key == "binding" { binding = v } else if key == "id" { id = v }
     }
     flush()
+    // derived groups arrive interleaved (switch/move alternate per
+    // workspace) — order them section by section, keeping in-group
+    // order (sort(by:) is not stable, so index is the tiebreak)
+    let sectionOrder = ["Workspaces", "Focus", "Move", "Layout & columns", "Size", "System"]
+    let indexed = entries.enumerated().map { ($0.offset, $0.element) }
+    entries = indexed.sorted { a, b in
+        let ga = sectionOrder.firstIndex(of: a.1.group) ?? 99
+        let gb = sectionOrder.firstIndex(of: b.1.group) ?? 99
+        return ga != gb ? ga < gb : a.0 < b.0
+    }.map { $0.1 }
     // the exec chords live in Karabiner while OmniWM runs (its hotkeys
     // cannot exec) — the sheet must show them or half the muscle-memory
     // map is invisible. Read our own injected rules back by their

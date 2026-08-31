@@ -2622,7 +2622,13 @@ func pointerAtScreenTop() {
     else { return }
     let fromTop = screen.frame.maxY - p.y
     if fromTop <= revealEdge {
-        setRevealed(true)
+        // Climb only when fullscreen actually hides the bar. Otherwise stay
+        // at the -20 resting level so the auto-hidden native menu bar can
+        // slide in ABOVE the bar and stay clickable — app menus are
+        // unreachable by mouse without this.
+        if fullscreenDisplays().contains(screenID(screen)) {
+            setRevealed(true)
+        }
     } else if revealed, openPopup == nil, fromTop > barHeight + 12 {
         // a popup keeps it up: its anchor must not vanish under the pointer
         setRevealed(false)

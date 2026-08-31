@@ -11,10 +11,10 @@
 #include <unistd.h>
 #include <CoreGraphics/CoreGraphics.h>
 
-#define PROTOCOL_VERSION 11
 
 struct omniwm {
 	int fd;
+	int proto; // negotiated per connection — 0.6.3 speaks 11, 0.6.4 13
 	char token[80];
 	char* rbuf;
 	size_t rlen, rcap;
@@ -22,6 +22,8 @@ struct omniwm {
 	int* names; // cached workspace numbers
 	int nnames;
 };
+
+static bool ensure_conn(omniwm* c);
 
 static void socket_path(char* out, size_t n)
 {
@@ -73,7 +75,7 @@ omniwm* omniwm_new(void)
 	c->fd = -1;
 	c->rcap = 65536;
 	c->rbuf = malloc(c->rcap);
-	if (!connect_socket(c)) { omniwm_close(c); return NULL; }
+	if (!ensure_conn(c)) { omniwm_close(c); return NULL; }
 	return c;
 }
 
@@ -122,12 +124,37 @@ static char* request_once(omniwm* c, const char* kind, const char* payload_json)
 	char req[8192];
 	int n = payload_json
 		? snprintf(req, sizeof req, "{\"version\":%d,\"id\":\"g%u\",\"kind\":\"%s\",\"authorizationToken\":\"%s\",\"payload\":%s}\n",
-			PROTOCOL_VERSION, ++c->seq, kind, c->token, payload_json)
+			c->proto, ++c->seq, kind, c->token, payload_json)
 		: snprintf(req, sizeof req, "{\"version\":%d,\"id\":\"g%u\",\"kind\":\"%s\",\"authorizationToken\":\"%s\"}\n",
-			PROTOCOL_VERSION, ++c->seq, kind, c->token);
+			c->proto, ++c->seq, kind, c->token);
 	if (n <= 0 || (size_t)n >= sizeof req) return NULL;
 	if (!send_all(c->fd, req, (size_t)n)) return NULL;
 	return read_line(c->fd, c->rbuf, &c->rlen, &c->rcap);
+}
+
+// version requests succeed regardless of protocol mismatch (their one
+// documented exception), so every fresh connection asks the server what
+// it speaks instead of hardcoding a number — 0.6.4 bumped 11 to 13 and
+// rejects old clients, and this client refuses to die that way again
+static bool handshake(omniwm* c)
+{
+	c->proto = 11; // any value is accepted for the version request itself
+	char* r = request_once(c, "version", NULL);
+	if (!r) return false;
+	yyjson_doc* d = yyjson_read(r, strlen(r), 0);
+	bool ok = false;
+	if (d) {
+		yyjson_val* pv = yyjson_obj_get(omniwm_payload_of(d), "protocolVersion");
+		if (pv) { c->proto = (int)yyjson_get_num(pv); ok = c->proto > 0; }
+		yyjson_doc_free(d);
+	}
+	free(r);
+	return ok;
+}
+
+static bool ensure_conn(omniwm* c)
+{
+	return connect_socket(c) && handshake(c);
 }
 
 char* omniwm_request(omniwm* c, const char* kind, const char* payload_json)
@@ -138,7 +165,7 @@ char* omniwm_request(omniwm* c, const char* kind, const char* payload_json)
 	// dead socket (OmniWM restarted): reconnect once, retry once
 	if (c->fd >= 0) close(c->fd);
 	c->fd = -1;
-	if (!connect_socket(c)) return NULL;
+	if (!ensure_conn(c)) return NULL;
 	return request_once(c, kind, payload_json);
 }
 

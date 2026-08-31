@@ -408,6 +408,13 @@ fi
 # so every rebuild means dead swipes until the user re-grants. The only
 # safe rebuild is the one that does not happen: skip the whole block
 # unless the binary is missing or a source file actually changed.
+# omacosy-omni: the scripts' held-socket client for OmniWM (plain C,
+# ~3 ms launch; no grants involved, so it is simply rebuilt when stale)
+G="$REPO_DIR/helper/gesture"
+if [ ! -x "$HOME/.local/bin/omacosy-omni" ] || find "$G/omniwm.c" "$G/omniwm.h" "$G/omnicli.c" -newer "$HOME/.local/bin/omacosy-omni" 2>/dev/null | grep -q .; then
+  clang -std=c99 -O2 -arch arm64 -o "$HOME/.local/bin/omacosy-omni" "$G/omniwm.c" "$G/yyjson.c" "$G/omnicli.c" \
+    || echo "omacosy-omni build failed"
+fi
 GESTURE_STALE=""
 if [ ! -x "$GESTURE_BIN" ]; then GESTURE_STALE=1
 elif find "$REPO_DIR/helper/gesture" -newer "$GESTURE_BIN" 2>/dev/null | grep -q .; then GESTURE_STALE=1
@@ -419,7 +426,7 @@ if [ -n "$GESTURE_STALE" ]; then
   mkdir -p "$GESTURE_APP/Contents/MacOS"
   clang -std=c99 -O3 -fobjc-arc -arch arm64 \
     -Wno-pointer-integer-compare -Wno-incompatible-pointer-types-discards-qualifiers -Wno-absolute-value \
-    -o "$GESTURE_BIN" "$G/aerospace.c" "$G/yyjson.c" "$G/haptic.c" "$G/event_tap.m" "$G/main.m" \
+    -o "$GESTURE_BIN" "$G/aerospace.c" "$G/omniwm.c" "$G/yyjson.c" "$G/haptic.c" "$G/event_tap.m" "$G/main.m" \
     -framework CoreFoundation -framework IOKit -F/System/Library/PrivateFrameworks -framework MultitouchSupport \
     -framework ApplicationServices -framework Cocoa -ldl \
     || echo "omacosy-gesture build failed"

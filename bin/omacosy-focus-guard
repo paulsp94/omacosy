@@ -14,7 +14,10 @@
 # This is aerospace's exec-on-workspace-change contract (env vars,
 # bounce via its CLI); under OmniWM the hook never fires, but a
 # straggler from the handover must stand down, not bounce.
-wm_is_omniwm() { pgrep -qf "OmniWM.app/Contents/MacOS/OmniWM"; }
+# a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
+# process for 31 ms per call, and a stale socket after a crash cannot
+# fool a real request the way a file test could
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 wm_is_omniwm && exit 0
 
 U=$(id -u)

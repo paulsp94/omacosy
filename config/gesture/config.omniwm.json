@@ -5,8 +5,8 @@
   "skip_empty": false,
   "fingers": 4,
   "cursor_monitor": true,
-  "swipe_left": "/Users/paulspende/.local/bin/omacosy-ws next >/dev/null 2>&1",
-  "swipe_right": "/Users/paulspende/.local/bin/omacosy-ws prev >/dev/null 2>&1",
+  "swipe_left": "next",
+  "swipe_right": "prev",
   "swipe_up": "/Users/paulspende/.local/bin/omacosy-overview >/dev/null 2>&1",
   "swipe_down": "/Users/paulspende/.local/bin/omacosy-overview close >/dev/null 2>&1"
 }

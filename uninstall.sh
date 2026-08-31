@@ -63,6 +63,7 @@ rm -rf "$HOME/.config/omacosy"
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist"
 rm -rf "$HOME/.local/share/omacosy/omacosy-gesture.app"
+rm -f "$HOME/.local/bin/omacosy-omni"
 if have "cloned-aerospace-swipe" && [ -d "$HOME/.local/share/aerospace-swipe" ]; then
   launchctl unload "$HOME/Library/LaunchAgents/com.acsandmann.swipe.plist" 2>/dev/null || true
   rm -f "$HOME/Library/LaunchAgents/com.acsandmann.swipe.plist"

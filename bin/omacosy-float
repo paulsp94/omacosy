@@ -15,7 +15,10 @@ set -uo pipefail
 
 # The float walk below is aerospace CLI end to end, and OmniWM raises
 # floats natively (raise-all-floating-windows) — stand down.
-wm_is_omniwm() { pgrep -qf "OmniWM.app/Contents/MacOS/OmniWM"; }
+# a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
+# process for 31 ms per call, and a stale socket after a crash cannot
+# fool a real request the way a file test could
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 wm_is_omniwm && exit 0
 
 A="$(command -v aerospace || echo /opt/homebrew/bin/aerospace)"

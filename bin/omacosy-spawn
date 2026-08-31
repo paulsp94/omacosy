@@ -27,9 +27,12 @@ APP="$1"
 # Spawns are still serialized (lock + wait for the window to appear)
 # so a burst becomes a clean staircase instead of splitting the same
 # cell over and over.
-wm_is_omniwm() { pgrep -qf "OmniWM.app/Contents/MacOS/OmniWM"; }
+# a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
+# process for 31 ms per call, and a stale socket after a crash cannot
+# fool a real request the way a file test could
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 if wm_is_omniwm; then
-  O="$(command -v omniwmctl || echo /Applications/OmniWM.app/Contents/MacOS/omniwmctl)"
+  OMNI="$HOME/.local/bin/omacosy-omni"
   LOCK="/tmp/omacosy-spawn-$(id -u).lock.d"
   for i in $(seq 120); do
     mkdir "$LOCK" 2>/dev/null && break
@@ -38,26 +41,18 @@ if wm_is_omniwm; then
   done
   trap 'rmdir "$LOCK" 2>/dev/null' EXIT
   mult="$(sed -n 's/^splitWidthMultiplier = //p' "$HOME/.config/omniwm/settings.toml" 2>/dev/null | head -1)"
-  read -r dir before < <("$O" query focused-window 2>/dev/null | /usr/bin/python3 -c "
-import sys, json
-mult = float('${mult:-1.4}')
-try:
-    w = json.load(sys.stdin)['result']['payload']['window']
-except Exception:
-    print('none 0'); sys.exit(0)
-f = w.get('frame') or {}
-if w.get('mode') == 'floating' or not f:
-    print('none 0'); sys.exit(0)
-print('down' if f['height'] * mult > f['width'] else 'right', w.get('workspace', {}).get('id', ''))
-")
-  [ "$dir" != "none" ] && "$O" command preselect "$dir" >/dev/null 2>&1
-  count() { "$O" query windows 2>/dev/null | /usr/bin/python3 -c "import sys,json; print(len(json.load(sys.stdin)['result']['payload']['windows']))" 2>/dev/null || echo 0; }
-  prev="$(count)"
+  "$OMNI" preselect-for-focused "${mult:-1.4}" >/dev/null 2>&1 || true
+  before="$("$OMNI" window-count 2>/dev/null || echo 0)"
+  # the next spawn may go once this window exists: a windows-changed
+  # subscription says so the moment it does. Subscribed BEFORE the
+  # open — `open -na` can block until the app is up, and a window that
+  # registered before the subscription would never be seen (measured:
+  # one spawn in three hit the cap that way). 2 s cap so a launch that
+  # never shows a window cannot wedge the terminal key.
+  "$OMNI" wait-window "$before" 2000 >/dev/null 2>&1 &
+  waiter=$!
   open -na "$APP"
-  for _ in $(seq 40); do
-    [ "$(count)" -gt "$prev" ] 2>/dev/null && exit 0
-    sleep 0.05
-  done
+  wait "$waiter" 2>/dev/null || true
   exit 0
 fi
 

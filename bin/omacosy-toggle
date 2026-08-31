@@ -17,7 +17,10 @@ AGENTS=(com.omacosy.ffm com.omacosy.borders com.omacosy.dwindle com.omacosy.bar 
 
 # which manager is live right now (off records it into the marker; on
 # can't detect — the manager is down by then — so it reads the marker)
-wm_is_omniwm() { pgrep -qf "OmniWM.app/Contents/MacOS/OmniWM"; }
+# a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
+# process for 31 ms per call, and a stale socket after a crash cannot
+# fool a real request the way a file test could
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 
 mode="${1:-toggle}"
 if [ "$mode" = toggle ]; then

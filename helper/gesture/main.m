@@ -14,6 +14,8 @@
 #include "Cocoa/Cocoa.h"
 #include "aerospace.h"
 #include "config.h"
+#include "omniwm.h"
+#include <pthread.h>
 #import "event_tap.h"
 #include "haptic.h"
 #include <AppKit/AppKit.h>
@@ -244,8 +246,32 @@ static void stamp_user_intent(void)
 		close(fd);
 }
 
+static omniwm* g_omni; // held OmniWM IPC connection (lazy)
+static pthread_mutex_t g_omni_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void switch_workspace(const char* ws)
 {
+	// OmniWM: the slot-scoped cycle runs in-process on a held IPC
+	// connection — one round-trip (~1 ms, plus OmniWM's own switch
+	// work) instead of shell + omniwmctl (~80 ms). fire_horizontal
+	// dispatches concurrently, so the connection is serialized.
+	if ((!strcmp(ws, "next") || !strcmp(ws, "prev")) && omniwm_available()) {
+		pthread_mutex_lock(&g_omni_lock);
+		if (!g_omni)
+			g_omni = omniwm_new();
+		int target = g_omni ? omniwm_cycle(g_omni, ws[0] == 'n' ? 1 : -1) : 0;
+		pthread_mutex_unlock(&g_omni_lock);
+		if (target) {
+			stamp_user_intent();
+			printf("Switched workspace (omniwm) to '%d'.\n", target);
+			if (g_config.haptic && g_haptic)
+				haptic_actuate(g_haptic, 3);
+			return;
+		}
+		// a stale socket file after OmniWM quit: fall through to the
+		// aerospace path below rather than eating the swipe
+		fprintf(stderr, "omniwm: cycle failed, falling back to aerospace path\n");
+	}
 	// omacosy: a direction that looks like a COMMAND is run like the
 	// vertical gestures are — OmniWM mode routes horizontal through
 	// omniwmctl, keeping this engine's tuned mid-gesture thresholds

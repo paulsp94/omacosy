@@ -22,59 +22,26 @@ moved() { : > /tmp/omacosy-bar-moved; }
 # 11-19 twin math needed), so those route through omniwmctl. throw and
 # throw-all have no slot-twin IPC equivalent — they stand down. `|| true`
 # because IPC may be off; a dead key beats error spam on every press.
-wm_is_omniwm() { pgrep -qf "OmniWM.app/Contents/MacOS/OmniWM"; }
+# a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
+# process for 31 ms per call, and a stale socket after a crash cannot
+# fool a real request the way a file test could
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 if wm_is_omniwm; then
-  O="$(command -v omniwmctl || echo /Applications/OmniWM.app/Contents/MacOS/omniwmctl)"
-  # `omacosy-ws next` puts the direction in $slot with op defaulting to
-  # switch — normalize, or the cycle logic never runs and OmniWM's own
-  # walk-everything next wanders into the guest workspaces
+  # everything goes through omacosy-omni — a held-socket C client that
+  # launches in ~3 ms where omniwmctl needs ~10 ms and the old
+  # shell-and-python cycle needed ~80 ms. The slot-scoped cycle (1-9
+  # stays in 1-9, guests in guests, wrapping) lives in helper/gesture/
+  # omniwm.c, shared with the gesture daemon, so a swipe and Super+Tab
+  # cannot disagree. No bar poke: the bar follows OmniWM's
+  # workspace-bar channel, which fires for empties too.
+  OMNI="$HOME/.local/bin/omacosy-omni"
   case "$slot" in next | prev) op="$slot" ;; esac
-  # under aerospace the exec-on-workspace-change hook feeds the bar's
-  # fast path; OmniWM's event stream skips EMPTY-workspace switches in
-  # bursts (measured: focus-name 8/9 'executed', no event, pill stale)
-  # — so every switch here feeds the same fast-path file by hand
-  bar_poke() { echo "$1" > /tmp/omacosy-bar-ws 2>/dev/null || true; }
   case "$op" in
-    switch)
-      "$O" command switch-workspace "$slot" >/dev/null 2>&1 || true
-      bar_poke "$slot" ;;
-    move)
-      "$O" command move-to-workspace "$slot" >/dev/null 2>&1 || true
-      bar_poke "$slot" ;;
+    switch) "$OMNI" command switch-workspace "{\"workspaceNumber\":$slot}" >/dev/null 2>&1 || true ;;
+    move) "$OMNI" command move-to-workspace "{\"workspaceNumber\":$slot}" >/dev/null 2>&1 || true ;;
     next | prev)
-      # OmniWM's own next/prev walks EVERY workspace resolved onto the
-      # monitor — on one display the 14-17 guests live there too, and
-      # swiping past 9 wandered into them (the same trap aerospace's
-      # `workspace next` had). Cycle within the slot SET the current
-      # workspace belongs to: 1-9 when on a single digit, the guest
-      # set when on one of those — aerospace-era semantics exactly.
-      # One query + one command, no python: the swipe->switch latency
-      # IS this script (measured 215 ms with three python startups and
-      # three IPC round-trips; ~80 ms now). The workspace set is static
-      # config, so it comes from settings.toml instead of a query; the
-      # current workspace comes from `query active-workspace` — the
-      # workspaces query's isFocused goes dark on EMPTY workspaces and
-      # once stranded the cycle there.
-      cur="$("$O" query active-workspace 2>/dev/null | sed -n 's/.*"rawName" : "\([0-9][0-9]*\)".*/\1/p' | head -1)"
-      names="$(sed -n 's/^name = "\([0-9][0-9]*\)"$/\1/p' "$HOME/.config/omniwm/settings.toml" | sort -n | tr '\n' ' ')"
-      if [ -n "$cur" ] && [ -n "$names" ]; then
-        # slot set: 1-9 cycles within 1-9, guests (14-17) within guests
-        inset=""
-        for n in $names; do
-          if [ "$cur" -le 9 ]; then [ "$n" -le 9 ] && inset="$inset $n"
-          else [ "$n" -gt 9 ] && inset="$inset $n"; fi
-        done
-        set -- $inset; count=$#; i=0; idx=0
-        for n in "$@"; do [ "$n" = "$cur" ] && idx=$i; i=$((i + 1)); done
-        if [ "$op" = next ]; then idx=$(( (idx + 1) % count )); else idx=$(( (idx + count - 1) % count )); fi
-        shift "$idx"; cur="$1"
-      else
-        cur=""
-      fi
-      r="$("$O" workspace focus-name "$cur" 2>&1)" || true
-      echo "$(date +%T) op=$op cur='$cur' resp='$(echo "$r" | head -c 120)'" >> /tmp/omacosy-ws.log
-      bar_poke "$cur"
-      ;;
+      r="$("$OMNI" "$op" 2>&1)" || true
+      echo "$(date +%T) op=$op resp='$(echo "$r" | head -c 120)'" >> /tmp/omacosy-ws.log ;;
   esac
   exit 0
 fi

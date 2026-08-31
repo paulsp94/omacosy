@@ -958,3 +958,43 @@ name = "17"
 
 [workspaces.monitorAssignment]
 type = "secondary"
+
+[[workspaces]]
+id = "C0AD1810-71CC-472C-9505-A93669092C60"
+layoutType = "dwindle"
+name = "11"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
+id = "C4E0FC16-5C3D-4734-969F-DB6C618736A5"
+layoutType = "dwindle"
+name = "12"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
+id = "DE88283D-D177-4524-BDB4-A9B245C93848"
+layoutType = "dwindle"
+name = "13"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
+id = "CD5ADCC9-1345-415A-B309-3F2D2C513122"
+layoutType = "dwindle"
+name = "18"
+
+[workspaces.monitorAssignment]
+type = "secondary"
+
+[[workspaces]]
+id = "0B20A159-4901-43D8-A0AB-F8185FDD14CA"
+layoutType = "dwindle"
+name = "19"
+
+[workspaces.monitorAssignment]
+type = "secondary"

@@ -412,7 +412,7 @@ fi
 # ~3 ms launch; no grants involved, so it is simply rebuilt when stale)
 G="$REPO_DIR/helper/gesture"
 if [ ! -x "$HOME/.local/bin/omacosy-omni" ] || find "$G/omniwm.c" "$G/omniwm.h" "$G/omnicli.c" -newer "$HOME/.local/bin/omacosy-omni" 2>/dev/null | grep -q .; then
-  clang -std=c99 -O2 -arch arm64 -o "$HOME/.local/bin/omacosy-omni" "$G/omniwm.c" "$G/yyjson.c" "$G/omnicli.c" \
+  clang -std=c99 -O2 -arch arm64 -o "$HOME/.local/bin/omacosy-omni" "$G/omniwm.c" "$G/yyjson.c" "$G/omnicli.c" -framework ApplicationServices -framework CoreFoundation \
     || echo "omacosy-omni build failed"
 fi
 GESTURE_STALE=""

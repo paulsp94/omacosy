@@ -9,6 +9,7 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <CoreGraphics/CoreGraphics.h>
 
 #define PROTOCOL_VERSION 11
 
@@ -224,9 +225,57 @@ int omniwm_workspace_numbers(omniwm* c, int** out)
 	return n;
 }
 
+// the workspace to cycle is the one under the CURSOR: OmniWM's
+// "current display" follows the focused window, and on an empty
+// workspace there is none — a swipe over the empty screen would cycle
+// the OTHER monitor. Same rule the aerospace-era cursor_monitor patch
+// enforced. Falls back to isCurrent when the frames don't resolve.
+static char* active_workspace_under_cursor(omniwm* c)
+{
+	CGEventRef e = CGEventCreate(NULL);
+	CGPoint pt = CGEventGetLocation(e); // CG: y grows DOWN from main's top
+	CFRelease(e);
+	char* r = omniwm_request(c, "query", "{\"name\":\"displays\",\"selectors\":{},\"fields\":[]}");
+	if (!r) return NULL;
+	char* out = NULL;
+	char* fallback = NULL;
+	yyjson_doc* d = yyjson_read(r, strlen(r), 0);
+	if (d) {
+		yyjson_val* list = yyjson_obj_get(payload_of(d), "displays");
+		size_t i, m;
+		yyjson_val* disp;
+		// OmniWM frames are APPKIT (y grows up; verified: the laptop
+		// reports y=1440 where CG says -982) — lift the CG cursor into
+		// AppKit space off the main display's height before testing
+		double main_h = 0;
+		yyjson_arr_foreach(list, i, m, disp) {
+			if (yyjson_get_bool(yyjson_obj_get(disp, "isMain")))
+				main_h = yyjson_get_num(yyjson_obj_get(yyjson_obj_get(disp, "frame"), "height"));
+		}
+		double ak_y = main_h - pt.y;
+		yyjson_arr_foreach(list, i, m, disp) {
+			const char* ws = yyjson_get_str(yyjson_obj_get(yyjson_obj_get(disp, "activeWorkspace"), "rawName"));
+			if (!ws) continue;
+			yyjson_val* f = yyjson_obj_get(disp, "frame");
+			double x = yyjson_get_num(yyjson_obj_get(f, "x"));
+			double y = yyjson_get_num(yyjson_obj_get(f, "y"));
+			double w = yyjson_get_num(yyjson_obj_get(f, "width"));
+			double h = yyjson_get_num(yyjson_obj_get(f, "height"));
+			if (pt.x >= x && pt.x < x + w && ak_y >= y && ak_y < y + h && !out)
+				out = strdup(ws);
+			if (yyjson_get_bool(yyjson_obj_get(disp, "isCurrent")) && !fallback)
+				fallback = strdup(ws);
+		}
+		yyjson_doc_free(d);
+	}
+	free(r);
+	if (out) { free(fallback); return out; }
+	return fallback;
+}
+
 int omniwm_cycle(omniwm* c, int step)
 {
-	char* cur_s = omniwm_active_workspace(c);
+	char* cur_s = active_workspace_under_cursor(c);
 	if (!cur_s) return 0;
 	int cur = atoi(cur_s);
 	free(cur_s);

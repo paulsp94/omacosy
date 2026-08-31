@@ -252,75 +252,75 @@ minHeight = 320.0
 minWidth = 660.0
 
 [[hotkeys]]
-binding = "Control+Option+Command+1"
+binding = "Unassigned"
 id = "switchWorkspace.0"
 
 [[hotkeys]]
-binding = "Hyper+1"
+binding = "Unassigned"
 id = "moveToWorkspace.0"
 
 [[hotkeys]]
-binding = "Control+Option+Command+2"
+binding = "Unassigned"
 id = "switchWorkspace.1"
 
 [[hotkeys]]
-binding = "Hyper+2"
+binding = "Unassigned"
 id = "moveToWorkspace.1"
 
 [[hotkeys]]
-binding = "Control+Option+Command+3"
+binding = "Unassigned"
 id = "switchWorkspace.2"
 
 [[hotkeys]]
-binding = "Hyper+3"
+binding = "Unassigned"
 id = "moveToWorkspace.2"
 
 [[hotkeys]]
-binding = "Control+Option+Command+4"
+binding = "Unassigned"
 id = "switchWorkspace.3"
 
 [[hotkeys]]
-binding = "Hyper+4"
+binding = "Unassigned"
 id = "moveToWorkspace.3"
 
 [[hotkeys]]
-binding = "Control+Option+Command+5"
+binding = "Unassigned"
 id = "switchWorkspace.4"
 
 [[hotkeys]]
-binding = "Hyper+5"
+binding = "Unassigned"
 id = "moveToWorkspace.4"
 
 [[hotkeys]]
-binding = "Control+Option+Command+6"
+binding = "Unassigned"
 id = "switchWorkspace.5"
 
 [[hotkeys]]
-binding = "Hyper+6"
+binding = "Unassigned"
 id = "moveToWorkspace.5"
 
 [[hotkeys]]
-binding = "Control+Option+Command+7"
+binding = "Unassigned"
 id = "switchWorkspace.6"
 
 [[hotkeys]]
-binding = "Hyper+7"
+binding = "Unassigned"
 id = "moveToWorkspace.6"
 
 [[hotkeys]]
-binding = "Control+Option+Command+8"
+binding = "Unassigned"
 id = "switchWorkspace.7"
 
 [[hotkeys]]
-binding = "Hyper+8"
+binding = "Unassigned"
 id = "moveToWorkspace.7"
 
 [[hotkeys]]
-binding = "Control+Option+Command+9"
+binding = "Unassigned"
 id = "switchWorkspace.8"
 
 [[hotkeys]]
-binding = "Hyper+9"
+binding = "Unassigned"
 id = "moveToWorkspace.8"
 
 [[hotkeys]]

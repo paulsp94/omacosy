@@ -16,6 +16,7 @@ static int usage(void)
 		"       omacosy-omni command <name> [args-json]\n"
 		"       omacosy-omni query <name> [fields-csv]      (raw response line)\n"
 		"       omacosy-omni preselect-for-focused [mult]   (down/right by aspect)\n"
+		"       omacosy-omni slot <1-9> [move]               (cursor display's set)\n"
 		"       omacosy-omni window-count | wait-window <baseline> [timeout-ms]\n");
 	return 3;
 }
@@ -68,6 +69,28 @@ int main(int argc, char** argv)
 		snprintf(payload, sizeof payload, "{\"name\":\"%s\",\"selectors\":{},\"fields\":[%s]}", argv[2], fields);
 		char* r = omniwm_request(c, "query", payload);
 		if (r) { puts(r); free(r); } else rc = 1;
+	} else if (!strcmp(op, "slot") && argc > 2) {
+		// Super+N semantics: slot N of the display under the CURSOR —
+		// the aerospace-era translation OmniWM's name-global hotkeys
+		// lost (its "4" always means the main set's 4). Guest set is
+		// named 1N by convention, so base falls out of the cursor
+		// display's active workspace.
+		char* cur_s = omniwm_active_workspace_under_cursor(c);
+		rc = 1;
+		if (cur_s) {
+			int base = atoi(cur_s) > 9 ? 10 : 0;
+			free(cur_s);
+			int target = base + atoi(argv[2]);
+			if (argc > 3 && !strcmp(argv[3], "move")) {
+				char args[64];
+				snprintf(args, sizeof args, "{\"workspaceNumber\":%d}", target);
+				rc = omniwm_command(c, "move-to-workspace", args) ? 0 : 1;
+			} else {
+				char name[16];
+				snprintf(name, sizeof name, "%d", target);
+				rc = omniwm_focus_name(c, name) ? 0 : 1;
+			}
+		}
 	} else if (!strcmp(op, "throw-window") || !strcmp(op, "throw-workspace")) {
 		// aerospace-era semantics: the TWIN slot on the other monitor
 		// (4 <-> 14), so the twin workspace keeps its meaning — never a

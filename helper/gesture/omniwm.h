@@ -28,6 +28,8 @@ bool omniwm_focus_name(omniwm* c, const char* raw_name);
 bool omniwm_command(omniwm* c, const char* name, const char* args_json);
 // malloc'd rawName of the current display's active workspace, or NULL
 char* omniwm_active_workspace(omniwm* c);
+// same, for the display under the CURSOR (falls back to isCurrent)
+char* omniwm_active_workspace_under_cursor(omniwm* c);
 // numeric workspace names, ascending; returns count, fills *out (malloc'd)
 int omniwm_workspace_numbers(omniwm* c, int** out);
 // slot-scoped cycle: 1-9 stays in 1-9, guests (>9) stay in guests, wraps.

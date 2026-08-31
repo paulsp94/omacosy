@@ -50,7 +50,17 @@ SHIFT = SUPER + ["shift"]
 home = os.environ["HOME"]
 apps = {k: os.environ[k] for k in ("TERMINAL", "BROWSER", "MUSIC", "MESSENGER")}
 
-rules = [
+# workspace slots: OmniWM's native switchWorkspace.N is name-global
+# (always the main set), blind to which screen you are on — these route
+# through omacosy-omni's cursor-display slot resolution instead. The
+# native ids are Unassigned in settings.toml so nothing double-fires.
+slot_rules = []
+for n in range(1, 10):
+    key = str(n)
+    slot_rules.append(rule(f"workspace slot {n}", key, SUPER, cmd=f"{home}/.local/bin/omacosy-omni slot {n} >/dev/null 2>&1"))
+    slot_rules.append(rule(f"move to slot {n}", key, SHIFT, cmd=f"{home}/.local/bin/omacosy-omni slot {n} move >/dev/null 2>&1"))
+
+rules = slot_rules + [
     # omacosy-spawn preselects the omarchy insertion side and serializes
     # bursts — a bare `open -na` gives OmniWM's above-not-below spiral
     rule("terminal", "return_or_enter", SUPER, cmd=f"{home}/.local/bin/omacosy-spawn '{apps['TERMINAL']}'"),

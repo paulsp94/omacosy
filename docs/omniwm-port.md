@@ -173,12 +173,20 @@ requires restoring settings.toml.pre-v1 first.
    its shutdown save overwrites the restore). Do not brew upgrade
    until upstream fixes land (their HEAD commits already target this
    area).
-11. **0.6.4 REGRESSION: singleWindowFit="fill" ignores outer gaps** —
-   a solo dwindle window gets the raw display frame ({0,0,3440,1440}),
-   covering the reserved bar strip; two windows lay out correctly
-   (height 1398, top 42 clear). 0.6.3 respected outer gaps in the solo
-   case. Measured 2026-08-31 on 0.6.4. High priority: most workspaces
-   hold one window.
+11. RETRACTED as a 0.6.4 regression; re-diagnosed 2026-08-31. Two real
+   causes, both version-independent: (a) dwindle `move.*` is
+   groupWindow(into: neighbor) BY DESIGN — a directional move STACKS
+   into the neighbor's cell (12px member strip), it never swaps; the
+   true swap is moveColumn.* -> swapWindow on dwindle. We rebound
+   Hyper+arrows to moveColumn.* (swap) and parked stacking on
+   Control+Option+Shift+arrows. (b) workspace-state POISONING: windows
+   closing while OmniWM is mid-restart leave stale tiles that corrupt
+   that workspace's tree (raw-display frames, phantom hides) until it
+   empties — upstream HEAD is actively fixing this ("prevent AX
+   mismatches from poisoning layout constraints", "retire stale
+   tiles"). The 0.6.3 rollback was, in hindsight, unnecessary; staying
+   on 0.6.3 until the poisoning fixes ship in a release, then
+   re-upgrade (settings migration + protocol negotiation both ready).
 9. **Dwindle vertical insertion is top, not bottom** — with smartSplit
    off, planSplit returns newFirst=false ("new is second") and
    splitRect places the first child at minY; frames are y-up, so the

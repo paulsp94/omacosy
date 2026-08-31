@@ -1679,7 +1679,11 @@ func humanizeOmniId(_ id: String) -> String {
         return out.trimmingCharacters(in: .whitespaces)
     }
     let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
-    let head = words(parts[0])
+    // dwindle reality beats the catalog's niri-flavored names: moveColumn
+    // is a tile SWAP there (the binding people reach for daily), and
+    // plain move STACKS into the neighbor as a group
+    let renamed = ["moveColumn": "swap window", "move": "stack into"]
+    let head = renamed[parts[0]] ?? words(parts[0])
     guard parts.count > 1 else { return head }
     if let n = Int(parts[1]) { return "\(head) \(n + 1)" }
     switch parts[1] {

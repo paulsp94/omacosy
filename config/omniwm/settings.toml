@@ -448,19 +448,19 @@ binding = "Unassigned"
 id = "moveColumnToWorkspace.8"
 
 [[hotkeys]]
-binding = "Hyper+Left Arrow"
+binding = "Control+Option+Shift+Left Arrow"
 id = "move.left"
 
 [[hotkeys]]
-binding = "Hyper+Down Arrow"
+binding = "Control+Option+Shift+Down Arrow"
 id = "move.down"
 
 [[hotkeys]]
-binding = "Hyper+Up Arrow"
+binding = "Control+Option+Shift+Up Arrow"
 id = "move.up"
 
 [[hotkeys]]
-binding = "Hyper+Right Arrow"
+binding = "Control+Option+Shift+Right Arrow"
 id = "move.right"
 
 [[hotkeys]]
@@ -540,19 +540,19 @@ binding = "Control+Option+Command+N"
 id = "toggleNativeFullscreen"
 
 [[hotkeys]]
-binding = "Control+Option+Shift+Left Arrow"
+binding = "Hyper+Left Arrow"
 id = "moveColumn.left"
 
 [[hotkeys]]
-binding = "Control+Option+Shift+Right Arrow"
+binding = "Hyper+Right Arrow"
 id = "moveColumn.right"
 
 [[hotkeys]]
-binding = "Unassigned"
+binding = "Hyper+Up Arrow"
 id = "moveColumn.up"
 
 [[hotkeys]]
-binding = "Unassigned"
+binding = "Hyper+Down Arrow"
 id = "moveColumn.down"
 
 [[hotkeys]]

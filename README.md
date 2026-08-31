@@ -14,7 +14,7 @@ this one repo.
 The whole environment idles at about **157MB** of memory. Numbers per
 process in [Memory use](#memory-use).
 
-Most of it is five small signed Swift binaries built by the installer,
+Most of it is seven small signed binaries (Swift and C) built by the installer,
 because several of the existing tools are broken on macOS 26. The
 details are under [What's inside](#whats-inside).
 
@@ -142,15 +142,15 @@ Your personal shell config belongs in `~/.zshrc.local`; the repo's
 
 | Piece | Tool | Config |
 |---|---|---|
-| Tiling WM | [AeroSpace](https://github.com/nikitabobko/AeroSpace) | `config/aerospace/aerospace.template.toml` |
+| Tiling WM | [AeroSpace](https://github.com/nikitabobko/AeroSpace) *or* [OmniWM](https://github.com/BarutSRB/OmniWM) via `omacosy-wm-switch` | `config/aerospace/aerospace.template.toml`, `config/omniwm/settings.toml` |
 | Super key | [Karabiner](https://karabiner-elements.pqrs.org) (Caps Lock → cmd+ctrl+alt) | `config/karabiner/` (copied, not symlinked — TCC) |
 | Status bar, popups, shade | `omacosy-bar` (self-compiled launchd agent, one process draws all of it) | `helper/bar.swift` |
 | Window borders + fullscreen shroud | `omacosy-borders` (self-compiled launchd agent) | `helper/borders.swift`, `config/borders.conf` |
-| Focus follows mouse | `omacosy-ffm` (self-compiled launchd agent) | `helper/ffm.swift`, `config/ffm-ignore` |
-| Trackpad gestures | `omacosy-gesture` (self-compiled launchd agent; engine absorbed from [aerospace-swipe](https://github.com/acsandmann/aerospace-swipe), MIT) | `helper/gesture/`, `config/gesture/config.json` |
+| Focus follows mouse | `omacosy-ffm` (self-compiled launchd agent; parked under OmniWM, whose native ffm takes over) | `helper/ffm.swift`, `config/ffm-ignore` |
+| Trackpad gestures | `omacosy-gesture` (self-compiled launchd agent; engine absorbed from [aerospace-swipe](https://github.com/acsandmann/aerospace-swipe), MIT) | `helper/gesture/`, `config/gesture/` (live copy: `~/.config/omacosy/gesture.json`) |
 | Workspace overview | `omacosy-overview` (self-compiled resident daemon) | `helper/overview.swift` |
-| Dwindle split direction | `on-focus-changed` hook running `omacosy-helper split-hint` (no daemon) | `config/aerospace/aerospace.template.toml`, `helper/main.swift` |
-| Workspace / window navigation | `omacosy-ws`, `omacosy-cycle`, `omacosy-float` | `bin/` |
+| Dwindle split direction | AeroSpace: `on-focus-changed` hook running `omacosy-helper split-hint`; OmniWM: native dwindle + a preselect in `omacosy-spawn` (omarchy's right/below insertion) | `config/aerospace/aerospace.template.toml`, `helper/main.swift` |
+| Workspace / window navigation | `omacosy-ws`, `omacosy-cycle`, `omacosy-float`, `omacosy-wm-switch`; under OmniWM all of it rides `omacosy-omni`, a held-socket IPC client | `bin/`, `helper/gesture/omniwm.c` |
 | Terminal look & spawn size | Ghostty (hidden titlebar; new windows spawn small so tiling never flashes full-screen) | `config/ghostty/config` |
 | Park/restore the stack | `omacosy-toggle` | `bin/omacosy-toggle` |
 | System glue | `omacosy-helper` (self-compiled) | `helper/main.swift` |
@@ -198,10 +198,13 @@ One process draws all of it: bar, popups and sliders are surfaces of
 A popup stays open while the pointer is anywhere in the bar or the
 popup, and closes when it is in neither. The bar hides itself when a
 window takes the whole display, and comes back if you put the pointer
-on the very top edge, the way the menu bar does, so brightness and
-volume stay reachable mid-film without leaving fullscreen. While
-revealed it climbs above the fullscreen window and drops back behind
-everything when the pointer leaves.
+on the very top edge, so brightness and volume stay reachable mid-film
+without leaving fullscreen. The climb happens only when a fullscreen
+window actually covers the bar — otherwise the top edge belongs to the
+auto-hidden native menu bar, which reveals ABOVE the bar and stays
+clickable (app menus were unreachable before that fix). It drops back
+behind everything when the pointer leaves. Under OmniWM the bar simply
+stays visible in its reserved strip and never plays this game.
 
 - **Apple menu**: About, System Settings, Lock, Sleep, Restart, Shut
   Down, Next Theme (the menu the hidden native bar took away).
@@ -251,7 +254,7 @@ typing or app shortcuts. Caps Lock tapped alone is Escape.
 | `Super+arrows` | focus the window in that direction |
 | `Super+s` | surface the next floating window (and bring the cursor) |
 | **Moving windows** | |
-| `Super+shift+arrows` | move the window in that direction |
+| `Super+shift+arrows` | AeroSpace: move the window in that direction. OmniWM: **swap** tiles (`ctrl+opt+shift+arrows` stacks into the neighbor as a group instead) |
 | `Super+shift+1..9` | move the window to workspace N and follow it |
 | `Super+shift+o` | throw the window to the same slot on the other display |
 | `Super+shift+space` | throw the WHOLE workspace to the other display |
@@ -262,11 +265,11 @@ typing or app shortcuts. Caps Lock tapped alone is Escape.
 | `Super+-` / `Super+=` | resize |
 | `Super+f` | fullscreen — on notched displays the camera strip is blacked out so it reads as true fullscreen, while the window stays in its workspace (swipes still reach it) |
 | `Super+n` | native macOS fullscreen (a separate Space — outside the workspace model, avoid unless an app needs it) |
-| `Super+r` | resize mode (`h/j/k/l`, `-`/`=`, `esc`) |
+| `Super+r` | resize mode (`h/j/k/l`, `-`/`=`, `esc`) — AeroSpace only; OmniWM has no binding modes |
 | `Super+shift+;` | service mode (`esc` reload, `r` flatten, `⌫` close others) |
 | **Apps and system** | |
 | `Super+enter` / `Super+shift+enter` | terminal / browser |
-| `Super+space` | launcher (Raycast) |
+| `Super+space` | launcher (Raycast; the OmniWM option opens OmniWM's command palette instead) |
 | `Super+shift+f` / `+m` / `+g` | files / music / messenger (set in `apps.conf`) |
 | `Super+shift+t` | next theme |
 | `Super+shift+b` | next wallpaper of the current theme |
@@ -394,14 +397,25 @@ theme-set), app-launching chords run through Karabiner rules that the
 switch installs and removes, and Super+Space opens OmniWM's command
 palette instead of Raycast.
 
-Beta honesty: multi-monitor under OmniWM is untested by the author so
-far, and docs/omniwm-port.md carries a ledger of upstream quirks found
-while porting (empty-workspace event gaps, outer gaps ignored by
-dwindle in 0.6.3). AeroSpace remains the battle-tested default.
+Under OmniWM the plumbing changes shape: `Super+N`/`Hyper+N` route
+through Karabiner into `omacosy-omni` (a held-socket IPC client) so
+slots resolve on the display under your cursor — OmniWM's native
+hotkeys are name-global and would always hit the main set — at the
+cost of ~40 ms per chord. `Hyper+arrows` swap tiles; OmniWM's own
+directional move *stacks* windows into a group, which stays available
+on `ctrl+opt+shift+arrows`.
+
+Honesty section: this option is daily-driven on the author's desk
+(0.6.4, docked multi-monitor, each display running its own nine
+workspaces), and docs/omniwm-port.md carries a ledger of upstream
+quirks found while porting — read it before assuming a weird layout is
+omacosy's fault. AeroSpace remains the longer-tested default.
 
 ## Focus follows mouse & swipes
 
-`omacosy-ffm`: hover focuses, with no raise over floating windows, so
+Under the OmniWM option this daemon is parked: OmniWM's native
+focus-follows-mouse (with warp-to-focus and hover-raise) replaces it.
+Under AeroSpace, `omacosy-ffm`: hover focuses, with no raise over floating windows, so
 floats stay in front. It is event-driven off mouse movement, so a
 parked cursor never steals focus from a launching window. It never
 changes focus during drags, and never through an always-on-top panel:
@@ -428,11 +442,17 @@ to jump; empty workspaces show as small chips, and digits work for them
 too. **Swipe down**, Esc, or a backdrop click dismisses. It is a
 resident daemon, so it opens instantly.
 
+**Type to search** while it is open: a search pill filters cards to
+matching window titles and apps as you type, `Enter` jumps to the
+first hit, `Esc` clears the filter before it closes the overview.
+Digits type into an active filter instead of switching, so numeric
+titles stay reachable.
+
 **Drag a card** to reorganize: the row makes room as you move, and the
 drop slides everything between the old and new position over by one.
-AeroSpace workspaces cannot be renamed or resequenced (the name is the
-position), so what actually moves is their windows, which means a split
-layout inside a moved workspace comes back as a flat row. Dropping a
+Workspaces cannot be renamed or resequenced in either WM (the name is
+the position), so what actually moves is their windows, which means a
+split layout inside a moved workspace comes back as a flat row. Dropping a
 card on an empty chip moves that workspace there instead.
 
 ## Parking the setup
@@ -444,10 +464,12 @@ stops managing, all daemons and the bar stop) without uninstalling;
 ## Memory use
 
 About **157MB** of physical footprint (what Activity Monitor calls
-Memory) across WM, bar, three background daemons, the swipe daemon and
+Memory) across WM, bar, three background daemons, the gesture daemon and
 Karabiner, measured docked to a second display. Resident set size reads
 ~322MB, but RSS counts each process's share of the same shared system
 frameworks more than once, so footprint is the number to compare.
+(Measured in AeroSpace mode; OmniWM mode is a wash — its ~44MB WM
+replaces AeroSpace plus the parked `omacosy-ffm`.)
 Largest first:
 
 | | footprint | RSS |

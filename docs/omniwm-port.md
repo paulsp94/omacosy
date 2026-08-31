@@ -163,6 +163,16 @@ requires restoring settings.toml.pre-v1 first.
 7. (cosmetic) **Their border decorates their own command palette** —
    mismatched-radius outline; persists with borders disabled, so
    likely the palette's own edge drawing.
+12. **0.6.4 REGRESSION: move-onto hides windows** — 1 left + 2 right,
+   move a right window left: only two windows stay visible; the third
+   parks (isVisible false, layoutReason "standard") and focusing it
+   swaps which window shows, at near-fullscreen frames. Reproduced
+   2026-08-31. Together with #11 this made 0.6.4 unusable; ROLLED BACK
+   to 0.6.3 same day (grants survive — same signing identity; restore
+   settings.toml.pre-v1 only after the 0.6.4 process is fully gone, or
+   its shutdown save overwrites the restore). Do not brew upgrade
+   until upstream fixes land (their HEAD commits already target this
+   area).
 11. **0.6.4 REGRESSION: singleWindowFit="fill" ignores outer gaps** —
    a solo dwindle window gets the raw display frame ({0,0,3440,1440}),
    covering the reserved bar strip; two windows lay out correctly

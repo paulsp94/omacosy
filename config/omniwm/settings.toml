@@ -1,16 +1,18 @@
-# OmniWM settings for omacosy — FULL canonical file, schemaVersion 1
-# (0.6.4 migration format). Since 0.6.4, upgrades migrate settings
-# automatically and back up the previous file to settings.toml.pre-v1 —
-# the old 0.6.3 strict-decoder trap is gone. Migration strips comments
-# and reorders tables, so: the repo copy is the reference, the live
-# copy is state; theme-set rewrites [borders.color] per theme. Mirrored
-# from the live, migration-verified file (2026-08-31, OmniWM 0.6.4).
+# OmniWM settings for omacosy — FULL canonical file for 0.6.3 (the
+# version we run: 0.6.4's dwindle layout regressed — solo windows fill
+# the raw display over the bar, and moves hide windows; see
+# docs/omniwm-port.md ledger #11/#12. Do NOT `brew upgrade omniwm`
+# until a fixed release lands; rolling back from 0.6.4 requires
+# restoring settings AFTER the old app fully quits, or its shutdown
+# save clobbers the restore. 0.6.3's decoder is strict: every table
+# complete, every hotkey catalog id present exactly once; a sparse or
+# 0.6.4-format file is quarantined to settings.toml.corrupt and
+# replaced with defaults (which disable IPC).
 monitorBarOverrides = []
 monitorDwindleOverrides = []
 monitorGapOverrides = []
 monitorNiriOverrides = []
 monitorOrientationOverrides = []
-schemaVersion = 1
 
 [appearance]
 mode = "dark"
@@ -144,10 +146,6 @@ widthPercent = 50.0
 [routing]
 mode = "custom"
 
-[scratchpads]
-
-[scratchpads.labels]
-
 [statusBar]
 showAppNames = false
 showWorkspaceName = false
@@ -160,7 +158,6 @@ enabled = false
 excludedBundleIDs = []
 height = 24.0
 hideEmptyWorkspaces = false
-hideInNativeFullscreen = false
 notchActiveZoneWidth = 180.0
 notchMode = "moveBelowMenuBar"
 position = "overlappingMenuBar"
@@ -253,86 +250,6 @@ bundleId = "com.apple.MobileSMS"
 id = "552FB77D-BF0E-4737-90A6-B5BC6986C579"
 minHeight = 320.0
 minWidth = 660.0
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.1"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.1"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.2"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.2"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.3"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.3"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.4"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.4"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.5"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.5"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.6"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.6"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.7"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.7"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.8"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.8"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.9"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.9"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "toggleScratchpad.10"
-
-[[hotkeys]]
-binding = "Unassigned"
-id = "assignFocusedWindowToScratchpad.10"
 
 [[hotkeys]]
 binding = "Unassigned"
@@ -901,6 +818,14 @@ id = "rescueOffscreenWindows"
 [[hotkeys]]
 binding = "Control+Option+Command+T"
 id = "toggleFocusedWindowFloating"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "assignFocusedWindowToScratchpad"
+
+[[hotkeys]]
+binding = "Unassigned"
+id = "toggleScratchpadWindow"
 
 [[hotkeys]]
 binding = "Control+Option+M"

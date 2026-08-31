@@ -9,6 +9,11 @@
 #include <stddef.h>
 
 typedef struct omniwm omniwm;
+typedef struct yyjson_doc yyjson_doc;
+typedef struct yyjson_val yyjson_val;
+// result.payload of a parsed response, NULL unless ok:true — shared so
+// the CLI cannot re-walk the envelope and forget the ok check
+yyjson_val* omniwm_payload_of(yyjson_doc* d);
 
 // true when OmniWM's socket + secret exist (IPC enabled, WM running)
 bool omniwm_available(void);

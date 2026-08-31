@@ -197,12 +197,38 @@ func omniwmctl(_ args: [String]) -> String {
     return String(data: data, encoding: .utf8) ?? ""
 }
 
+// exec a binary at an absolute path, stdout back (the omniQuery fast path)
+func shellOut(_ bin: String, _ args: [String]) -> String {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: bin)
+    p.arguments = args
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return "" }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    return String(data: data, encoding: .utf8) ?? ""
+}
+
 // One query, unwrapped to its payload. The CLI prints the whole
 // IPCResponse envelope; everything the overview wants lives two levels
 // down at result.payload (bar.swift's helper, duplicated by the repo's
 // helper-binary convention).
 func omniQuery(_ name: String, _ args: [String] = []) -> [String: Any]? {
-    let out = omniwmctl(["query", name] + args + ["--format", "json"])
+    // fast path: omacosy-omni holds a persistent socket and launches in
+    // ~3 ms where omniwmctl (Swift) needs ~10; it speaks `query <name>
+    // [fields-csv]` and prints the same envelope. Anything fancier
+    // (selector flags like --focused) stays on omniwmctl.
+    let omni = "\(NSHomeDirectory())/.local/bin/omacosy-omni"
+    var out = ""
+    if FileManager.default.isExecutableFile(atPath: omni),
+       args.isEmpty || (args.count == 2 && args[0] == "--fields") {
+        out = shellOut(omni, args.isEmpty ? ["query", name] : ["query", name, args[1]])
+    }
+    if out.isEmpty {
+        out = omniwmctl(["query", name] + args + ["--format", "json"])
+    }
     guard let data = out.data(using: .utf8),
           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           (root["ok"] as? Bool) == true,

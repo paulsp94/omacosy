@@ -176,7 +176,7 @@ bool omniwm_command(omniwm* c, const char* name, const char* args_json)
 	return ok;
 }
 
-static yyjson_val* payload_of(yyjson_doc* d)
+yyjson_val* omniwm_payload_of(yyjson_doc* d)
 {
 	yyjson_val* root = yyjson_doc_get_root(d);
 	if (!yyjson_get_bool(yyjson_obj_get(root, "ok"))) return NULL;
@@ -190,7 +190,7 @@ char* omniwm_active_workspace(omniwm* c)
 	char* out = NULL;
 	yyjson_doc* d = yyjson_read(r, strlen(r), 0);
 	if (d) {
-		yyjson_val* p = payload_of(d);
+		yyjson_val* p = omniwm_payload_of(d);
 		const char* name = yyjson_get_str(yyjson_obj_get(yyjson_obj_get(p, "workspace"), "rawName"));
 		if (name) out = strdup(name);
 		yyjson_doc_free(d);
@@ -209,7 +209,7 @@ int omniwm_workspace_numbers(omniwm* c, int** out)
 	int* nums = NULL;
 	yyjson_doc* d = yyjson_read(r, strlen(r), 0);
 	if (d) {
-		yyjson_val* list = yyjson_obj_get(payload_of(d), "workspaces");
+		yyjson_val* list = yyjson_obj_get(omniwm_payload_of(d), "workspaces");
 		size_t idx, max;
 		yyjson_val* w;
 		nums = malloc(sizeof(int) * (yyjson_arr_size(list) + 1));
@@ -241,7 +241,7 @@ static char* active_workspace_under_cursor(omniwm* c)
 	char* fallback = NULL;
 	yyjson_doc* d = yyjson_read(r, strlen(r), 0);
 	if (d) {
-		yyjson_val* list = yyjson_obj_get(payload_of(d), "displays");
+		yyjson_val* list = yyjson_obj_get(omniwm_payload_of(d), "displays");
 		size_t i, m;
 		yyjson_val* disp;
 		// OmniWM frames are APPKIT (y grows up; verified: the laptop
@@ -305,7 +305,7 @@ int omniwm_window_count(omniwm* c)
 	int n = -1;
 	yyjson_doc* d = yyjson_read(r, strlen(r), 0);
 	if (d) {
-		yyjson_val* list = yyjson_obj_get(payload_of(d), "windows");
+		yyjson_val* list = yyjson_obj_get(omniwm_payload_of(d), "windows");
 		if (list) n = (int)yyjson_arr_size(list);
 		yyjson_doc_free(d);
 	}
@@ -329,7 +329,7 @@ int omniwm_wait_window_count_above(int baseline, int timeout_ms)
 		if (!line) break; // timeout or dead
 		yyjson_doc* d = yyjson_read(line, strlen(line), 0);
 		if (d) {
-			yyjson_val* list = yyjson_obj_get(payload_of(d), "windows");
+			yyjson_val* list = yyjson_obj_get(omniwm_payload_of(d), "windows");
 			int n = list ? (int)yyjson_arr_size(list) : -1;
 			yyjson_doc_free(d);
 			if (n > baseline) { result = n; free(line); break; }

@@ -368,7 +368,15 @@ static void fire_gesture(gesture_ctx* ctx, int direction)
 	ctx->last_fire_dir = direction;
 	ctx->state = GS_COMMITTED;
 
-	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+	// a SERIAL queue: the global concurrent pool gives no ordering, so
+	// two rapid opposite-direction flicks could reach the IPC mutex out
+	// of order and replay a stale target. FIFO by construction here.
+	static dispatch_queue_t switch_q;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		switch_q = dispatch_queue_create("com.omacosy.gesture.switch", DISPATCH_QUEUE_SERIAL);
+	});
+	dispatch_async(switch_q, ^{
 		switch_workspace(direction > 0 ? g_config.swipe_right : g_config.swipe_left);
 	});
 }

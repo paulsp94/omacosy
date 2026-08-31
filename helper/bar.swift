@@ -114,11 +114,37 @@ let omniwmctlBin = ["/opt/homebrew/bin/omniwmctl",
 @discardableResult
 func omniwmctl(_ args: [String]) -> String { shell(omniwmctlBin, args) }
 
+// exec a binary at an absolute path, stdout back (the omniQuery fast path)
+func shellOut(_ bin: String, _ args: [String]) -> String {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: bin)
+    p.arguments = args
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return "" }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    return String(data: data, encoding: .utf8) ?? ""
+}
+
 // One query, unwrapped to its payload. The CLI prints the whole
 // IPCResponse envelope; everything the bar wants lives two levels down
 // at result.payload (OmniWM docs/IPC-CLI.md, "Response Format").
 func omniQuery(_ name: String, _ args: [String] = []) -> [String: Any]? {
-    let out = omniwmctl(["query", name] + args + ["--format", "json"])
+    // fast path: omacosy-omni holds a persistent socket and launches in
+    // ~3 ms where omniwmctl (Swift) needs ~10; it speaks `query <name>
+    // [fields-csv]` and prints the same envelope. Anything fancier
+    // (selector flags like --focused) stays on omniwmctl.
+    let omni = "\(NSHomeDirectory())/.local/bin/omacosy-omni"
+    var out = ""
+    if FileManager.default.isExecutableFile(atPath: omni),
+       args.isEmpty || (args.count == 2 && args[0] == "--fields") {
+        out = shellOut(omni, args.isEmpty ? ["query", name] : ["query", name, args[1]])
+    }
+    if out.isEmpty {
+        out = omniwmctl(["query", name] + args + ["--format", "json"])
+    }
     guard let data = out.data(using: .utf8),
           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           (root["ok"] as? Bool) == true,
@@ -1741,7 +1767,8 @@ func omniwmCheatEntries() -> [CheatEntry] {
     flush()
     // derived groups arrive interleaved (switch/move alternate per
     // workspace) — order them section by section, keeping in-group
-    // order (sort(by:) is not stable, so index is the tiebreak)
+    // order (index tiebreak kept explicit rather than leaning on
+    // sort stability)
     let sectionOrder = ["Workspaces", "Focus", "Move", "Layout & columns", "Size", "System"]
     let indexed = entries.enumerated().map { ($0.offset, $0.element) }
     entries = indexed.sorted { a, b in

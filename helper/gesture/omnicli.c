@@ -56,8 +56,13 @@ int main(int argc, char** argv)
 		if (argc > 3) { // csv -> json array
 			char* csv = strdup(argv[3]);
 			size_t o = 0;
-			for (char* tok = strtok(csv, ","); tok; tok = strtok(NULL, ","))
-				o += (size_t)snprintf(fields + o, sizeof fields - o, "%s\"%s\"", o ? "," : "", tok);
+			for (char* tok = strtok(csv, ","); tok; tok = strtok(NULL, ",")) {
+				// snprintf returns the WOULD-BE length: unchecked, a long
+				// csv walks o past the buffer and the next write is out
+				// of bounds (reproduced as SIGBUS in review)
+				int n = snprintf(fields + o, sizeof fields - o, "%s\"%s\"", o ? "," : "", tok);
+				if (n < 0 || (o += (size_t)n) >= sizeof fields - 1) break;
+			}
 			free(csv);
 		}
 		snprintf(payload, sizeof payload, "{\"name\":\"%s\",\"selectors\":{},\"fields\":[%s]}", argv[2], fields);
@@ -85,7 +90,7 @@ int main(int argc, char** argv)
 				if (r) {
 					yyjson_doc* d = yyjson_read(r, strlen(r), 0);
 					if (d) {
-						yyjson_val* list = yyjson_obj_get(yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(d), "result"), "payload"), "windows");
+						yyjson_val* list = yyjson_obj_get(omniwm_payload_of(d), "windows");
 						size_t i, m; yyjson_val* w; rc = 0;
 						yyjson_arr_foreach(list, i, m, w) {
 							const char* ws = yyjson_get_str(yyjson_obj_get(yyjson_obj_get(w, "workspace"), "rawName"));
@@ -117,7 +122,7 @@ int main(int argc, char** argv)
 		if (r) {
 			yyjson_doc* d = yyjson_read(r, strlen(r), 0);
 			if (d) {
-				yyjson_val* w = yyjson_obj_get(yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(d), "result"), "payload"), "window");
+				yyjson_val* w = yyjson_obj_get(omniwm_payload_of(d), "window");
 				yyjson_val* f = yyjson_obj_get(w, "frame");
 				const char* mode = yyjson_get_str(yyjson_obj_get(w, "mode"));
 				if (f && !(mode && !strcmp(mode, "floating"))) {

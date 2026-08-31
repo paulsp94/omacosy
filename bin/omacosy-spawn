@@ -15,6 +15,18 @@
 APP="$1"
 [ -n "$APP" ] || exit 1
 
+# macOS ships no flock; mkdir is the portable atomic lock. Both WM
+# paths need the same serialization, so it is taken ONCE here. A
+# holder that died is stolen after ~5s so the terminal key can never
+# go dead.
+LOCK="/tmp/omacosy-spawn-$(id -u).lock.d"
+for i in $(seq 120); do
+  mkdir "$LOCK" 2>/dev/null && break
+  [ "$i" -ge 100 ] && { rm -rf "$LOCK"; }
+  sleep 0.05
+done
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 # Under OmniWM the split is native, but its insertion side is not
 # omarchy's: with smartSplit off a new window goes RIGHT in horizontal
 # splits and ABOVE in vertical ones (frames are y-up; "second child"
@@ -33,13 +45,6 @@ APP="$1"
 wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 if wm_is_omniwm; then
   OMNI="$HOME/.local/bin/omacosy-omni"
-  LOCK="/tmp/omacosy-spawn-$(id -u).lock.d"
-  for i in $(seq 120); do
-    mkdir "$LOCK" 2>/dev/null && break
-    [ "$i" -ge 100 ] && { rm -rf "$LOCK"; }
-    sleep 0.05
-  done
-  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
   mult="$(sed -n 's/^splitWidthMultiplier = //p' "$HOME/.config/omniwm/settings.toml" 2>/dev/null | head -1)"
   "$OMNI" preselect-for-focused "${mult:-1.4}" >/dev/null 2>&1 || true
   before="$("$OMNI" window-count 2>/dev/null || echo 0)"
@@ -58,15 +63,6 @@ fi
 
 STATE="/tmp/omacosy-split-state-$(id -u)"
 
-# macOS ships no flock; mkdir is the portable atomic lock. A holder
-# that died is stolen after ~5s so the terminal key can never go dead.
-LOCK="/tmp/omacosy-spawn-$(id -u).lock.d"
-for i in $(seq 120); do
-  mkdir "$LOCK" 2>/dev/null && break
-  [ "$i" -ge 100 ] && { rm -rf "$LOCK"; }
-  sleep 0.05
-done
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
 prev=0
 [ -f "$STATE" ] && prev=$(cut -d' ' -f1 "$STATE")

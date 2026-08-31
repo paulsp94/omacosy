@@ -87,8 +87,8 @@ run = 'layout floating'
 # through omacosy-spawn: spawns are serialized so each window's dwindle
 # split hint lands before the next window opens — spamming this chord
 # gives a clean spiral instead of a simultaneous flat pile
-cmd-ctrl-alt-enter = 'exec-and-forget $HOME/.local/bin/omacosy-spawn @TERMINAL@'
-cmd-ctrl-alt-shift-enter = 'exec-and-forget open -a @BROWSER@'
+cmd-ctrl-alt-enter = 'exec-and-forget $HOME/.local/bin/omacosy-spawn "@TERMINAL@"'
+cmd-ctrl-alt-shift-enter = 'exec-and-forget open -a "@BROWSER@"'
 
 # Launcher (omarchy: Super+Space)
 cmd-ctrl-alt-space = 'exec-and-forget open -a Raycast'
@@ -188,8 +188,8 @@ cmd-ctrl-alt-shift-space = 'exec-and-forget $HOME/.local/bin/omacosy-ws 0 throw-
 
 # Apps (omarchy: Super+Shift+letter)
 cmd-ctrl-alt-shift-f = 'exec-and-forget open ~'          # files
-cmd-ctrl-alt-shift-m = 'exec-and-forget open -a @MUSIC@' # music
-cmd-ctrl-alt-shift-g = 'exec-and-forget open -a @MESSENGER@'   # messenger (omarchy: G)
+cmd-ctrl-alt-shift-m = 'exec-and-forget open -a "@MUSIC@"' # music
+cmd-ctrl-alt-shift-g = 'exec-and-forget open -a "@MESSENGER@"'   # messenger (omarchy: G)
 
 # Lock the screen (omarchy: Super+Ctrl+L — ctrl is spent, so Shift+L)
 cmd-ctrl-alt-shift-l = 'exec-and-forget $HOME/.local/bin/omacosy-helper lock'

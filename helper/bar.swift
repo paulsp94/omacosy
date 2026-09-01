@@ -24,6 +24,7 @@
 // for the network, IOBluetooth for devices. Every one of those is a
 // publisher, so nothing here polls except the clock and the weather,
 // which have no publisher to listen to.
+import ApplicationServices
 import AppKit
 import CoreAudio
 import CoreBluetooth
@@ -1210,6 +1211,8 @@ func updateWeather() {
 struct PopupRow {
     var icon = ""
     var text = ""
+    var detail = "" // right-aligned, dim — menu shortcuts live here
+    var separator = false // a thin rule instead of content
     var hero = false // accent, bold — the title row
     var dim = false // the quiet action footer
     var highlight = false // today's week, the active device
@@ -1225,6 +1228,9 @@ let popupRadius: CGFloat = 8
 final class PopupView: NSView {
     var rows: [PopupRow] = []
     private var rowRects: [(Int, NSRect)] = []
+    // the row under the pointer, actionable rows only — menus read as
+    // menus when they answer the hover
+    private var hoveredRow: Int?
 
     // NOT flipped: CTLineDraw draws in the CONTEXT's coordinates, so a
     // flipped view renders every glyph mirrored. NSString.draw hid that
@@ -1249,6 +1255,7 @@ final class PopupView: NSView {
         var width: CGFloat = 0
         for row in rows {
             var w = advance(row.text, font(row))
+            if !row.detail.isEmpty { w += advance(row.detail, nerdFont("Regular", 11)) + 24 }
             if !row.icon.isEmpty { w += inkBox(row.icon, nerdFont("Bold", 13)).width + 8 }
             if row.slider != nil { w = max(w, 150) }
             width = max(width, w)
@@ -1270,7 +1277,14 @@ final class PopupView: NSView {
         var y = bounds.height - popupPad - rowHeight
         for (index, row) in rows.enumerated() {
             let rect = NSRect(x: popupPad, y: y, width: bounds.width - popupPad * 2, height: rowHeight)
-            if row.highlight {
+            if row.separator {
+                palette.label.withAlphaComponent(0.15).setFill()
+                NSRect(x: rect.minX + 2, y: rect.midY - 0.5, width: rect.width - 4, height: 1).fill()
+                rowRects.append((index, rect))
+                y -= rowHeight
+                continue
+            }
+            if row.highlight || index == hoveredRow {
                 palette.itemBG.setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: -2, dy: 2), xRadius: 4, yRadius: 4).fill()
             }
@@ -1297,7 +1311,13 @@ final class PopupView: NSView {
                 drawText(row.text, font(row), color(row),
                          leftAt: rect.maxX - advance(row.text, font(row)) - 4, midY: rect.midY)
             } else {
-                drawText(row.text, font(row), color(row), leftAt: x, midY: rect.midY)
+                let tint = index == hoveredRow && row.action != nil ? palette.accent : color(row)
+                drawText(row.text, font(row), tint, leftAt: x, midY: rect.midY)
+                if !row.detail.isEmpty {
+                    let df = nerdFont("Regular", 11)
+                    drawText(row.detail, df, palette.label.withAlphaComponent(0.5),
+                             leftAt: rect.maxX - advance(row.detail, df) - 4, midY: rect.midY)
+                }
             }
             rowRects.append((index, rect))
             y -= rowHeight
@@ -1312,11 +1332,20 @@ final class PopupView: NSView {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds,
-                                       options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
                                        owner: self))
     }
 
-    override func mouseExited(with event: NSEvent) { scheduleHullCheck() }
+    override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let hit = rowRects.first(where: { $0.1.contains(p) && rows[$0.0].action != nil })?.0
+        if hit != hoveredRow { hoveredRow = hit; needsDisplay = true }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoveredRow != nil { hoveredRow = nil; needsDisplay = true }
+        scheduleHullCheck()
+    }
 
     private func slide(_ event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
@@ -1355,13 +1384,23 @@ func closePopup() {
 
 // rows are rebuilt, not patched: the content is cheap to regenerate and a
 // stale row is worse than a redrawn one
+// exact-fit on every refresh: grow-only left the app-menu popup huge
+// after backing out of a long menu. The window is bottom-anchored, so
+// the frame is recomputed to keep the TOP edge pinned under the bar.
+var popupTopY: CGFloat = 0
+var popupAnchorX: CGFloat = 0
+var popupAlignLeft = false
+
 func refreshPopup() {
     guard let name = openPopup, let view = popupView, let window = popupWindow else { return }
     view.rows = popupRows(for: name)
-    var size = view.measure()
-    size.width = max(size.width, window.frame.width)
-    size.height = max(size.height, window.frame.height)
-    window.setContentSize(size)
+    let size = view.measure()
+    var x = popupAlignLeft ? popupAnchorX : popupAnchorX - size.width
+    if let screen = window.screen ?? NSScreen.main {
+        x = min(max(screen.frame.minX + 6, x), screen.frame.maxX - size.width - 6)
+    }
+    window.setFrame(NSRect(x: x, y: popupTopY - size.height,
+                           width: size.width, height: size.height), display: false)
     view.frame = NSRect(origin: .zero, size: size)
     view.needsDisplay = true
     view.display()
@@ -1381,6 +1420,9 @@ func showPopup(_ name: String, under anchor: NSRect, on surface: BarSurface, ali
     // right-aligned under the item, clamped to the screen it opened on
     let screen = surface.screen
     let barBottom = surface.window.frame.minY
+    popupTopY = barBottom - 4
+    popupAnchorX = alignLeft ? anchor.minX : anchor.maxX
+    popupAlignLeft = alignLeft
     var x = alignLeft ? anchor.minX : anchor.maxX - size.width
     x = min(max(screen.frame.minX + 6, x), screen.frame.maxX - size.width - 6)
     let window = PopupWindow(contentRect: NSRect(x: x, y: barBottom - size.height - 4,
@@ -1654,8 +1696,105 @@ func popupRows(for name: String) -> [PopupRow] {
     case "volume": return volumeRows()
     case "wifi": return wifiRows()
     case "bluetooth": return bluetoothRows()
+    case "appmenu": return appMenuRows()
     default: return []
     }
+}
+
+// The focused app's menu bar, read over Accessibility and rendered
+// INSIDE our popup: top level lists File/Edit/…, clicking drills into
+// that menu's actual items, and clicking a leaf performs its AXPress —
+// the command runs with no native menu ever appearing. A navigation
+// stack lives for the popup's lifetime; "‹" walks back up.
+var appMenuStack: [(title: String, element: AXUIElement)] = []
+
+private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, "AXChildren" as CFString, &ref) == .success,
+          let children = ref as? [AXUIElement] else { return [] }
+    return children
+}
+
+private func axString(_ element: AXUIElement, _ attr: String) -> String {
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attr as CFString, &ref) == .success else { return "" }
+    return ref as? String ?? ""
+}
+
+func appMenuRows() -> [PopupRow] {
+    let opts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+    guard AXIsProcessTrustedWithOptions(opts) else {
+        return [PopupRow(text: "grant Accessibility to omacosy-bar", hero: true),
+                PopupRow(text: "System Settings opened the pane — toggle the bar on,", dim: true),
+                PopupRow(text: "then click the app name again", dim: true)]
+    }
+    // drilled into a menu: its items, behind a back row
+    if let top = appMenuStack.last {
+        // a menu bar item wraps one AXMenu; the items live inside it
+        let container = axChildren(top.element).first ?? top.element
+        var rows = [PopupRow(icon: "‹", text: top.title, highlight: true, action: {
+            appMenuStack.removeLast()
+            refreshPopup()
+        })]
+        for item in axChildren(container) {
+            let title = axString(item, "AXTitle")
+            if title.isEmpty {
+                if rows.last?.separator != true { rows.append(PopupRow(separator: true)) }
+                continue
+            }
+            // AXEnabled is a lie for closed menus: apps validate items
+            // lazily when the menu OPENS, so unopened menus read mostly
+            // disabled (Arc's whole Tabs menu greyed out). Render all
+            // leaves live; a truly disabled item's AXPress just no-ops.
+            let hasKids = !axChildren(item).isEmpty
+            if hasKids {
+                rows.append(PopupRow(icon: "›", text: title, action: {
+                    appMenuStack.append((title, item))
+                    refreshPopup()
+                }))
+            } else {
+                let cmd = axString(item, "AXMenuItemCmdChar")
+                rows.append(PopupRow(text: title, detail: cmd.isEmpty ? "" : "⌘\(cmd)", action: {
+                    closePopup()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        AXUIElementPerformAction(item, "AXPress" as CFString)
+                    }
+                }))
+            }
+        }
+        return rows
+    }
+    // NOT frontmostApplication: the click that opens this popup makes
+    // the bar itself frontmost for a beat, and the popup bailed empty.
+    // model.frontApp tracks the real app and ignores our own pid.
+    guard !model.frontApp.isEmpty,
+          let app = NSWorkspace.shared.runningApplications.first(where: {
+              $0.localizedName == model.frontApp
+                  && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+          })
+    else {
+        tlog("appmenu: no app resolved for '\(model.frontApp)'")
+        return []
+    }
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    var menubarRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(ax, "AXMenuBar" as CFString, &menubarRef) == .success,
+          let menubar = menubarRef, CFGetTypeID(menubar) == AXUIElementGetTypeID()
+    else { return [PopupRow(text: "no menu bar readable for \(app.localizedName ?? "app")", dim: true)] }
+    // no hero title: the app's name is literally the pill this popup
+    // hangs from. Index 0 is the Apple menu — our apple pill's ground.
+    var rows: [PopupRow] = []
+    for item in axChildren(menubar as! AXUIElement).dropFirst() {
+        let title = axString(item, "AXTitle")
+        guard !title.isEmpty else { continue }
+        rows.append(PopupRow(icon: "›", text: title, action: {
+            appMenuStack.append((title, item))
+            refreshPopup()
+        }))
+    }
+    if !rows.isEmpty { rows[0].highlight = true }
+    tlog("appmenu: \(rows.count) menus for \(app.localizedName ?? "?")")
+    return rows
 }
 
 extension String {
@@ -2351,8 +2490,9 @@ final class BarView: NSView {
             x += chipBox + chipPad * 2
         }
 
-        // front-app pill
+        // front-app pill — clickable: it drops the app's real menus
         var leftEdge = bracket.maxX
+        appPillRect = .zero
         if !model.frontApp.isEmpty {
             let textW = advance(model.frontApp, appFont)
             let pill = NSRect(x: bracket.maxX + gap, y: (barHeight - pillHeight) / 2,
@@ -2360,6 +2500,7 @@ final class BarView: NSView {
             palette.itemBG.setFill()
             NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius).fill()
             draw(model.frontApp, appFont, palette.accent, centeredIn: pill)
+            appPillRect = pill
             leftEdge = pill.maxX
         }
 
@@ -2428,8 +2569,22 @@ final class BarView: NSView {
         return itemRects.first(where: { $0.1.contains(p) })?.0
     }
 
+    var appPillRect = NSRect.zero
+
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if appPillRect != .zero, appPillRect.contains(p), let surface {
+            appMenuStack.removeAll()
+            // clicking the bar deactivated the app, which makes its menu
+            // items read disabled and presses land nowhere — hand focus
+            // straight back while our popup (never key) stays up
+            NSWorkspace.shared.runningApplications
+                .first { $0.localizedName == model.frontApp }?
+                .activate()
+            showPopup("appmenu", under: window?.convertToScreen(convert(appPillRect, to: nil)) ?? appPillRect,
+                      on: surface, alignLeft: true)
+            return
+        }
         if appleRect.contains(p), let surface {
             // aligned to its LEFT edge: it is the leftmost thing on the bar,
             // so a right-aligned popup would hang off the screen

@@ -2899,10 +2899,9 @@ NotificationCenter.default.addObserver(
         monitorCount = now
         let op = now == 1 ? "collapse" : (wasSingle ? "restore" : "")
         guard !op.isEmpty else { return }
-        // aerospace only: the guest-set fold is an aerospace convention,
-        // and ws-collapse shells `aerospace` per window — OmniWM routes
-        // workspaces to monitors itself
-        guard !omniwmActive() else { return }
+        // both WMs: OmniWM re-routes guest WORKSPACES on unplug but
+        // strands their windows "after 9" — ws-collapse has an omniwm
+        // branch that folds and restores them through omacosy-omni
         tlog("displays: \(now) — running ws-collapse \(op)")
         // off-main: it shells out to aerospace per window, and restore
         // deliberately sleeps while aerospace re-adopts the monitor

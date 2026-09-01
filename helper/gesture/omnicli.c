@@ -17,6 +17,7 @@ static int usage(void)
 		"       omacosy-omni query <name> [fields-csv]      (raw response line)\n"
 		"       omacosy-omni preselect-for-focused [mult]   (down/right by aspect)\n"
 		"       omacosy-omni slot <1-9> [move]               (cursor display's set)\n"
+		"       omacosy-omni focus-window <window-id>\n"
 		"       omacosy-omni window-count | wait-window <baseline> [timeout-ms]\n");
 	return 3;
 }
@@ -133,6 +134,12 @@ int main(int argc, char** argv)
 			}
 			free(cur_s);
 		}
+	} else if (!strcmp(op, "focus-window") && argc > 2) {
+		char payload[512];
+		snprintf(payload, sizeof payload, "{\"name\":\"focus\",\"windowId\":\"%s\"}", argv[2]);
+		char* r = omniwm_request(c, "window", payload);
+		rc = r && strstr(r, "\"ok\":true") ? 0 : 1;
+		free(r);
 	} else if (!strcmp(op, "window-count")) {
 		int n = omniwm_window_count(c);
 		if (n >= 0) printf("%d\n", n); else rc = 1;

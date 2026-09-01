@@ -14,17 +14,76 @@
 #   workspaces to the secondary monitor); the map is consumed.
 export PATH="/opt/homebrew/bin:$PATH"
 
-# OmniWM routes workspaces per monitor itself on un/replug, and every
-# probe below is aerospace CLI — stand down.
 # a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
 # process for 31 ms per call, and a stale socket after a crash cannot
 # fool a real request the way a file test could
 wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
-wm_is_omniwm && exit 0
 
 STATE_DIR="$HOME/.local/state/omacosy"
 MAP="$STATE_DIR/collapse-map"
 mkdir -p "$STATE_DIR"
+
+if wm_is_omniwm; then
+  # OmniWM re-routes guest WORKSPACES to the main display on unplug,
+  # but their windows stay on two-digit workspaces "after 9" — the
+  # same fold as aerospace, done through omacosy-omni. No move-by-id
+  # exists, so each window is focused (verified) and then moved; the
+  # dance is the same one the overview's drag-reorder uses.
+  OMNI="$HOME/.local/bin/omacosy-omni"
+  case "${1:-}" in
+    collapse)
+      NDISP="$("$OMNI" query displays 2>/dev/null | /usr/bin/python3 -c 'import sys,json;print(len(json.load(sys.stdin)["result"]["payload"]["displays"]))' 2>/dev/null)" || exit 0
+      [ "$NDISP" = 1 ] || exit 0
+      "$OMNI" query windows id,workspace,app 2>/dev/null | /usr/bin/python3 -c '
+import sys, json
+wins = json.load(sys.stdin)["result"]["payload"]["windows"]
+used = set(); guests = {}
+for w in wins:
+    ws = (w.get("workspace") or {}).get("rawName") or ""
+    a = (w.get("app") or {}).get("name","")
+    if not ws.isdigit() or a.startswith("omacosy"): continue
+    n = int(ws)
+    if n <= 9: used.add(n)
+    else: guests.setdefault(n, []).append(w["id"])
+targets = [s for s in range(1, 10) if s not in used]
+for gws in sorted(guests):
+    if not targets: break
+    t = targets.pop(0)
+    for wid in guests[gws]:
+        print(f"{wid}	{t}	{gws}")
+' | while IFS=$'	' read -r wid target gws; do
+        [ -n "$wid" ] || continue
+        "$OMNI" focus-window "$wid" >/dev/null 2>&1 || continue
+        sleep 0.4
+        FOC="$("$OMNI" query focused-window 2>/dev/null | /usr/bin/python3 -c 'import sys,json;print((json.load(sys.stdin)["result"]["payload"].get("window") or {}).get("id",""))' 2>/dev/null)"
+        [ "$FOC" = "$wid" ] || continue
+        "$OMNI" command move-to-workspace "{\"workspaceNumber\":$target}" >/dev/null 2>&1 &&
+          printf '%s	%s
+' "$wid" "$gws" >>"$MAP"
+        sleep 0.3
+        echo "$(date '+%F %T') collapsed (omniwm) window -> $target (from $gws)" >>/tmp/omacosy-ws-collapse.log
+      done
+      : > /tmp/omacosy-bar-moved
+      ;;
+    restore)
+      [ -s "$MAP" ] || exit 0
+      mv "$MAP" "$MAP.run" 2>/dev/null || exit 0
+      sleep 1
+      while IFS=$'	' read -r wid gws; do
+        [ -n "$wid" ] && [ -n "$gws" ] || continue
+        "$OMNI" focus-window "$wid" >/dev/null 2>&1 || continue
+        sleep 0.4
+        "$OMNI" command move-to-workspace "{\"workspaceNumber\":$gws}" >/dev/null 2>&1 &&
+          echo "$(date '+%F %T') restored (omniwm) window -> $gws" >>/tmp/omacosy-ws-collapse.log
+        sleep 0.3
+      done <"$MAP.run"
+      rm -f "$MAP.run"
+      : > /tmp/omacosy-bar-moved
+      ;;
+    *) echo "usage: omacosy-ws-collapse <collapse|restore>" >&2; exit 2 ;;
+  esac
+  exit 0
+fi
 
 case "${1:-}" in
   collapse)

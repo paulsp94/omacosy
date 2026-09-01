@@ -1689,7 +1689,7 @@ func appleRows() -> [PopupRow] {
 
 func popupRows(for name: String) -> [PopupRow] {
     switch name {
-    case "apple": return appleRows()
+    case "apple": return appleMenuRows()
     case "clock": return calendarRows()
     case "weather": return weatherRows()
     case "brightness": return brightnessRows()
@@ -1721,6 +1721,78 @@ private func axString(_ element: AXUIElement, _ attr: String) -> String {
     return ref as? String ?? ""
 }
 
+// one menu's items as popup rows — shared by the app drill-down and the
+// apple pill. A menu bar item wraps one AXMenu; the items live inside.
+// AXEnabled is a lie for closed menus: apps validate items lazily when
+// a menu OPENS, so unopened menus read mostly disabled (Arc's whole
+// Tabs menu greyed out). Render all leaves live; a truly disabled
+// item's AXPress just no-ops.
+func rowsForMenu(_ element: AXUIElement) -> [PopupRow] {
+    let container = axChildren(element).first ?? element
+    var rows: [PopupRow] = []
+    for item in axChildren(container) {
+        let title = axString(item, "AXTitle")
+        if title.isEmpty {
+            if rows.last?.separator != true { rows.append(PopupRow(separator: true)) }
+            continue
+        }
+        if !axChildren(item).isEmpty {
+            rows.append(PopupRow(icon: "›", text: title, action: {
+                appMenuStack.append((title, item))
+                refreshPopup()
+            }))
+        } else {
+            let cmd = axString(item, "AXMenuItemCmdChar")
+            rows.append(PopupRow(text: title, detail: cmd.isEmpty ? "" : "⌘\(cmd)", action: {
+                closePopup()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    AXUIElementPerformAction(item, "AXPress" as CFString)
+                }
+            }))
+        }
+    }
+    return rows
+}
+
+// the frontmost app's AX menu bar, resolved the popup-safe way
+func frontAppAXMenuBar() -> AXUIElement? {
+    guard !model.frontApp.isEmpty,
+          let app = NSWorkspace.shared.runningApplications.first(where: {
+              $0.localizedName == model.frontApp
+                  && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+          })
+    else { return nil }
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(ax, "AXMenuBar" as CFString, &ref) == .success,
+          let bar = ref, CFGetTypeID(bar) == AXUIElementGetTypeID() else { return nil }
+    return (bar as! AXUIElement)
+}
+
+// The REAL Apple menu — child 0 of the front app's menu bar, the item
+// the app drill-down skips — through the same drill machinery, with
+// omacosy's own extras appended. Falls back to the hand-rolled rows
+// when Accessibility is not granted or AX has nothing.
+func appleMenuRows() -> [PopupRow] {
+    guard AXIsProcessTrusted(),
+          let menubar = frontAppAXMenuBar(),
+          let apple = axChildren(menubar).first
+    else { return appleRows() }
+    if !appMenuStack.isEmpty {
+        return appMenuRows()
+    }
+    var rows = rowsForMenu(apple)
+    guard !rows.isEmpty else { return appleRows() }
+    rows.append(PopupRow(separator: true))
+    rows.append(PopupRow(text: "Next Theme", dim: true, action: {
+        closePopup()
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = shell("\(NSHomeDirectory())/.local/bin/theme-next", [])
+        }
+    }))
+    return rows
+}
+
 func appMenuRows() -> [PopupRow] {
     let opts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
     guard AXIsProcessTrustedWithOptions(opts) else {
@@ -1730,61 +1802,24 @@ func appMenuRows() -> [PopupRow] {
     }
     // drilled into a menu: its items, behind a back row
     if let top = appMenuStack.last {
-        // a menu bar item wraps one AXMenu; the items live inside it
-        let container = axChildren(top.element).first ?? top.element
         var rows = [PopupRow(icon: "‹", text: top.title, highlight: true, action: {
             appMenuStack.removeLast()
             refreshPopup()
         })]
-        for item in axChildren(container) {
-            let title = axString(item, "AXTitle")
-            if title.isEmpty {
-                if rows.last?.separator != true { rows.append(PopupRow(separator: true)) }
-                continue
-            }
-            // AXEnabled is a lie for closed menus: apps validate items
-            // lazily when the menu OPENS, so unopened menus read mostly
-            // disabled (Arc's whole Tabs menu greyed out). Render all
-            // leaves live; a truly disabled item's AXPress just no-ops.
-            let hasKids = !axChildren(item).isEmpty
-            if hasKids {
-                rows.append(PopupRow(icon: "›", text: title, action: {
-                    appMenuStack.append((title, item))
-                    refreshPopup()
-                }))
-            } else {
-                let cmd = axString(item, "AXMenuItemCmdChar")
-                rows.append(PopupRow(text: title, detail: cmd.isEmpty ? "" : "⌘\(cmd)", action: {
-                    closePopup()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        AXUIElementPerformAction(item, "AXPress" as CFString)
-                    }
-                }))
-            }
-        }
+        rows.append(contentsOf: rowsForMenu(top.element))
         return rows
     }
     // NOT frontmostApplication: the click that opens this popup makes
     // the bar itself frontmost for a beat, and the popup bailed empty.
     // model.frontApp tracks the real app and ignores our own pid.
-    guard !model.frontApp.isEmpty,
-          let app = NSWorkspace.shared.runningApplications.first(where: {
-              $0.localizedName == model.frontApp
-                  && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
-          })
-    else {
-        tlog("appmenu: no app resolved for '\(model.frontApp)'")
+    guard let menubar = frontAppAXMenuBar() else {
+        tlog("appmenu: no menu bar for '\(model.frontApp)'")
         return []
     }
-    let ax = AXUIElementCreateApplication(app.processIdentifier)
-    var menubarRef: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(ax, "AXMenuBar" as CFString, &menubarRef) == .success,
-          let menubar = menubarRef, CFGetTypeID(menubar) == AXUIElementGetTypeID()
-    else { return [PopupRow(text: "no menu bar readable for \(app.localizedName ?? "app")", dim: true)] }
     // no hero title: the app's name is literally the pill this popup
     // hangs from. Index 0 is the Apple menu — our apple pill's ground.
     var rows: [PopupRow] = []
-    for item in axChildren(menubar as! AXUIElement).dropFirst() {
+    for item in axChildren(menubar).dropFirst() {
         let title = axString(item, "AXTitle")
         guard !title.isEmpty else { continue }
         rows.append(PopupRow(icon: "›", text: title, action: {
@@ -1793,7 +1828,6 @@ func appMenuRows() -> [PopupRow] {
         }))
     }
     if !rows.isEmpty { rows[0].highlight = true }
-    tlog("appmenu: \(rows.count) menus for \(app.localizedName ?? "?")")
     return rows
 }
 
@@ -2586,6 +2620,10 @@ final class BarView: NSView {
             return
         }
         if appleRect.contains(p), let surface {
+            appMenuStack.removeAll()
+            NSWorkspace.shared.runningApplications
+                .first { $0.localizedName == model.frontApp }?
+                .activate()
             // aligned to its LEFT edge: it is the leftmost thing on the bar,
             // so a right-aligned popup would hang off the screen
             showPopup("apple", under: window?.convertToScreen(convert(appleRect, to: nil)) ?? appleRect,

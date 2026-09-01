@@ -238,8 +238,20 @@ that exact workspace, then the bar falls back to the sole app or the digit.
 Image paths are unsupported because the bar resolves configured app icons at
 startup and does no config-file or image-file I/O while it draws.
 
-- **Apple menu**: About, System Settings, Lock, Sleep, Restart, Shut
-  Down, Next Theme (the menu the hidden native bar took away).
+- **Apple menu**: the REAL one, read over Accessibility — About This
+  Mac, System Settings, Recent Items (drills in, with app and
+  file-type icons resolved locally since AX exposes none), Force Quit,
+  the power verbs — plus omacosy's Next Theme at the bottom. Hidden
+  hold-Option duplicates are collapsed; falls back to a hand-rolled
+  list without the Accessibility grant.
+- **App menus**: clicking the front-app pill drops that app's actual
+  menu bar into a popup — File/Edit/… drill into their real items,
+  nested submenus included, and clicking a leaf performs it directly
+  via AXPress with no native menu ever appearing. Shortcuts sit
+  right-aligned; enabled-state is not rendered because apps validate
+  menu items only when a menu opens, so closed-menu reads lie. Menus
+  taller than the screen scroll. The one thing the auto-hidden native
+  bar still owned, gone.
 - **Workspaces**: one segmented capsule per monitor showing only that
   monitor's workspaces; accent pill on the focused one; click to jump.
 - **Media**: prev / play-pause / next + track title (Spotify). Centered

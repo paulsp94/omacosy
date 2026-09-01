@@ -33,6 +33,7 @@ import CoreWLAN
 import IOBluetooth
 import IOKit.ps
 import SystemConfiguration
+import UniformTypeIdentifiers
 
 // DisplayServices (private) — the same calls Control Center makes, and
 // the same ones helper/main.swift uses for `omacosy-helper brightness`.
@@ -1210,6 +1211,7 @@ func updateWeather() {
 
 struct PopupRow {
     var icon = ""
+    var image: NSImage? // 16pt leading icon — Recent Items entries
     var text = ""
     var detail = "" // right-aligned, dim — menu shortcuts live here
     var separator = false // a thin rule instead of content
@@ -1251,37 +1253,41 @@ final class PopupView: NSView {
         return palette.label
     }
 
+    // separators are hairlines, not rows: a full 26 pt of blank per
+    // rule made long menus read bulky instead of sectioned
+    func rowH(_ row: PopupRow) -> CGFloat { row.separator ? 10 : rowHeight }
+
     func measure() -> NSSize {
         var width: CGFloat = 0
+        var height: CGFloat = popupPad * 2
         for row in rows {
             var w = advance(row.text, font(row))
             if !row.detail.isEmpty { w += advance(row.detail, nerdFont("Regular", 11)) + 24 }
             if !row.icon.isEmpty { w += inkBox(row.icon, nerdFont("Bold", 13)).width + 8 }
+            if row.image != nil { w += 22 }
             if row.slider != nil { w = max(w, 150) }
             width = max(width, w)
+            height += rowH(row)
         }
-        return NSSize(width: width + popupPad * 2 + 20,
-                      height: CGFloat(rows.count) * rowHeight + popupPad * 2)
+        return NSSize(width: width + popupPad * 2 + 20, height: height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         rowRects.removeAll()
-        let body = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                                xRadius: popupRadius, yRadius: popupRadius)
+        // plain fill: the scroll CONTAINER carries the rounded clip and
+        // border, so corners stay put while tall content scrolls
         palette.barBG.setFill()
-        body.fill()
-        palette.accent.setStroke()
-        body.lineWidth = 1
-        body.stroke()
+        bounds.fill()
 
-        var y = bounds.height - popupPad - rowHeight
+        var y = bounds.height - popupPad
         for (index, row) in rows.enumerated() {
-            let rect = NSRect(x: popupPad, y: y, width: bounds.width - popupPad * 2, height: rowHeight)
+            let h = rowH(row)
+            y -= h
+            let rect = NSRect(x: popupPad, y: y, width: bounds.width - popupPad * 2, height: h)
             if row.separator {
                 palette.label.withAlphaComponent(0.15).setFill()
                 NSRect(x: rect.minX + 2, y: rect.midY - 0.5, width: rect.width - 4, height: 1).fill()
                 rowRects.append((index, rect))
-                y -= rowHeight
                 continue
             }
             if row.highlight || index == hoveredRow {
@@ -1289,6 +1295,10 @@ final class PopupView: NSView {
                 NSBezierPath(roundedRect: rect.insetBy(dx: -2, dy: 2), xRadius: 4, yRadius: 4).fill()
             }
             var x = rect.minX + 4
+            if let image = row.image {
+                image.draw(in: NSRect(x: x, y: rect.midY - 8, width: 16, height: 16))
+                x += 22
+            }
             if !row.icon.isEmpty {
                 // same strategy as the bar: glyphs centre on ink, text on
                 // cap height — one way of placing things in this file
@@ -1320,7 +1330,6 @@ final class PopupView: NSView {
                 }
             }
             rowRects.append((index, rect))
-            y -= rowHeight
         }
     }
 
@@ -1395,13 +1404,18 @@ func refreshPopup() {
     guard let name = openPopup, let view = popupView, let window = popupWindow else { return }
     view.rows = popupRows(for: name)
     let size = view.measure()
+    let screen = window.screen ?? NSScreen.main
+    var winH = size.height
     var x = popupAlignLeft ? popupAnchorX : popupAnchorX - size.width
-    if let screen = window.screen ?? NSScreen.main {
+    if let screen {
+        winH = min(size.height, popupTopY - screen.frame.minY - 20)
         x = min(max(screen.frame.minX + 6, x), screen.frame.maxX - size.width - 6)
     }
-    window.setFrame(NSRect(x: x, y: popupTopY - size.height,
-                           width: size.width, height: size.height), display: false)
+    window.setFrame(NSRect(x: x, y: popupTopY - winH,
+                           width: size.width, height: winH), display: false)
+    (window.contentView as? NSScrollView)?.frame = NSRect(origin: .zero, size: NSSize(width: size.width, height: winH))
     view.frame = NSRect(origin: .zero, size: size)
+    view.scroll(NSPoint(x: 0, y: max(0, size.height - winH))) // drilling resets to the top
     view.needsDisplay = true
     view.display()
 }
@@ -1417,16 +1431,19 @@ func showPopup(_ name: String, under anchor: NSRect, on surface: BarSurface, ali
     let size = view.measure()
     view.frame = NSRect(origin: .zero, size: size)
 
-    // right-aligned under the item, clamped to the screen it opened on
+    // right-aligned under the item, clamped to the screen it opened on;
+    // taller-than-screen content (Recent Items) scrolls inside a capped
+    // window instead of running off the display
     let screen = surface.screen
     let barBottom = surface.window.frame.minY
     popupTopY = barBottom - 4
     popupAnchorX = alignLeft ? anchor.minX : anchor.maxX
     popupAlignLeft = alignLeft
+    let winH = min(size.height, popupTopY - screen.frame.minY - 20)
     var x = alignLeft ? anchor.minX : anchor.maxX - size.width
     x = min(max(screen.frame.minX + 6, x), screen.frame.maxX - size.width - 6)
-    let window = PopupWindow(contentRect: NSRect(x: x, y: barBottom - size.height - 4,
-                                                 width: size.width, height: size.height),
+    let window = PopupWindow(contentRect: NSRect(x: x, y: popupTopY - winH,
+                                                 width: size.width, height: winH),
                              styleMask: .borderless, backing: .buffered, defer: false)
     window.isOpaque = false
     window.backgroundColor = .clear
@@ -1434,7 +1451,19 @@ func showPopup(_ name: String, under anchor: NSRect, on surface: BarSurface, ali
     window.level = .popUpMenu
     window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
     window.acceptsMouseMovedEvents = true
-    window.contentView = view
+    let scroll = NSScrollView(frame: NSRect(origin: .zero, size: NSSize(width: size.width, height: winH)))
+    scroll.drawsBackground = false
+    scroll.hasVerticalScroller = true
+    scroll.scrollerStyle = .overlay
+    scroll.autohidesScrollers = true
+    scroll.documentView = view
+    scroll.wantsLayer = true
+    scroll.layer?.cornerRadius = popupRadius
+    scroll.layer?.masksToBounds = true
+    scroll.layer?.borderWidth = 1
+    scroll.layer?.borderColor = palette.accent.cgColor
+    window.contentView = scroll
+    view.scroll(NSPoint(x: 0, y: max(0, size.height - winH))) // start at the top
     window.orderFrontRegardless()
     popupWindow = window
     popupView = view
@@ -1727,13 +1756,59 @@ private func axString(_ element: AXUIElement, _ attr: String) -> String {
 // a menu OPENS, so unopened menus read mostly disabled (Arc's whole
 // Tabs menu greyed out). Render all leaves live; a truly disabled
 // item's AXPress just no-ops.
-func rowsForMenu(_ element: AXUIElement) -> [PopupRow] {
+// Recent Items: AX exposes no menu-item images, but its entries are
+// apps and documents whose icons Launch Services can resolve by name —
+// the section headers ("Applications"/"Documents"/"Servers") say which
+// strategy applies. Headers render dim, entries get real icons.
+func recentItemIcon(_ title: String, section: String) -> NSImage? {
+    if section == "Applications" {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == title }),
+           let icon = app.icon { return icon }
+        if let path = NSWorkspace.shared.fullPath(forApplication: title) {
+            return NSWorkspace.shared.icon(forFile: path)
+        }
+        return nil
+    }
+    if section == "Documents" {
+        let ext = (title as NSString).pathExtension
+        if !ext.isEmpty, let type = UTType(filenameExtension: ext) {
+            return NSWorkspace.shared.icon(for: type)
+        }
+        return NSWorkspace.shared.icon(for: .data)
+    }
+    return nil
+}
+
+func rowsForMenu(_ element: AXUIElement, context: String = "",
+                 collapseAlternates: Bool = false) -> [PopupRow] {
     let container = axChildren(element).first ?? element
     var rows: [PopupRow] = []
+    var section = ""
+    var prevTitle = ""
+    let recents = context == "Recent Items"
     for item in axChildren(container) {
         let title = axString(item, "AXTitle")
         if title.isEmpty {
             if rows.last?.separator != true { rows.append(PopupRow(separator: true)) }
+            prevTitle = ""
+            continue
+        }
+        // the Apple menu carries hold-Option ALTERNATES ("Restart…" then
+        // "Restart", "Force Quit…" then "Force Quit Arc") that the native
+        // menu hides — AX enumerates them flat. An item whose title
+        // extends its predecessor's (ellipsis stripped) is the alternate.
+        if collapseAlternates, !prevTitle.isEmpty {
+            let base = prevTitle.replacingOccurrences(of: "…", with: "")
+            if title.hasPrefix(base) { continue }
+        }
+        prevTitle = title
+        // Recent Items' own hold-Option alternates ("Show X in Finder")
+        // carry a different title shape than the root menu's (English UI;
+        // the pattern is locale-bound, worst case they reappear)
+        if recents, title.hasPrefix("Show “"), title.hasSuffix("” in Finder") { continue }
+        if recents, ["Applications", "Documents", "Servers"].contains(title) {
+            section = title
+            rows.append(PopupRow(text: title, dim: true))
             continue
         }
         if !axChildren(item).isEmpty {
@@ -1743,7 +1818,8 @@ func rowsForMenu(_ element: AXUIElement) -> [PopupRow] {
             }))
         } else {
             let cmd = axString(item, "AXMenuItemCmdChar")
-            rows.append(PopupRow(text: title, detail: cmd.isEmpty ? "" : "⌘\(cmd)", action: {
+            rows.append(PopupRow(image: recents ? recentItemIcon(title, section: section) : nil,
+                                 text: title, detail: cmd.isEmpty ? "" : "⌘\(cmd)", action: {
                 closePopup()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     AXUIElementPerformAction(item, "AXPress" as CFString)
@@ -1781,9 +1857,9 @@ func appleMenuRows() -> [PopupRow] {
     if !appMenuStack.isEmpty {
         return appMenuRows()
     }
-    var rows = rowsForMenu(apple)
+    var rows = rowsForMenu(apple, collapseAlternates: true)
     guard !rows.isEmpty else { return appleRows() }
-    rows.append(PopupRow(separator: true))
+    if rows.last?.separator != true { rows.append(PopupRow(separator: true)) }
     rows.append(PopupRow(text: "Next Theme", dim: true, action: {
         closePopup()
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1806,7 +1882,7 @@ func appMenuRows() -> [PopupRow] {
             appMenuStack.removeLast()
             refreshPopup()
         })]
-        rows.append(contentsOf: rowsForMenu(top.element))
+        rows.append(contentsOf: rowsForMenu(top.element, context: top.title))
         return rows
     }
     // NOT frontmostApplication: the click that opens this popup makes

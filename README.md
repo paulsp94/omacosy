@@ -73,7 +73,7 @@ grant hide themselves rather than half-work.
 
 | Grant | Who asks | What it does | Without it |
 |---|---|---|---|
-| **Accessibility** | AeroSpace *or* OmniWM, `omacosy-gesture`, `omacosy-ffm` (AeroSpace mode only) | Move, resize and focus other apps' windows. This is the tiling itself, and it is the broadest permission here. | Nothing tiles. Not optional in practice. |
+| **Accessibility** | AeroSpace *or* OmniWM, `omacosy-gesture`, `omacosy-bar` (reads the focused app's menus for the app-pill popup), `omacosy-ffm` (AeroSpace mode only) | Move, resize and focus other apps' windows. This is the tiling itself, and it is the broadest permission here. | Nothing tiles. Not optional in practice. |
 | **Input Monitoring** | Karabiner-Elements, `omacosy-gesture` (and OmniWM, under that option) | Karabiner reads keys to remap Caps Lock; `omacosy-gesture` reads raw trackpad contacts, because macOS 26 stopped carrying touch data in normal events. | No Super key, no swipe gestures. |
 | **Screen Recording** | `omacosy-overview` | Captures a thumbnail per window for the overview cards, including windows the window manager has stashed offscreen. A screenshot of the visible screen could not see those. | Cards fall back to app icons and titles. |
 | **Bluetooth** | `omacosy-bar` | Reads adapter power and the paired-device list for the bluetooth pill and its menu. | The pill hides itself. |

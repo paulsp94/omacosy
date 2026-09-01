@@ -206,6 +206,38 @@ clickable (app menus were unreachable before that fix). It drops back
 behind everything when the pointer leaves. Under OmniWM the bar simply
 stays visible in its reserved strip and never plays this game.
 
+### Workspace icons
+
+You can set workspace icons in the optional
+`~/.config/omacosy/workspace-icons.conf` file. Each non-comment line has one
+workspace name, an equals sign, and either one Unicode scalar or a reverse-DNS
+application bundle identifier.
+
+```
+1 = ★
+14 = ◆
+
+4 = com.apple.Safari
+```
+
+The bar first uses a configured icon. It then uses the icon of the sole app on
+that workspace, and finally shows the workspace's last digit. Exact workspace
+names win. In this example, workspace `14` uses `◆`, not the `4` shorthand.
+The shorthand applies only to multi-digit, all-numeric workspace names ending
+in `1` through `9` when they have no valid exact declaration.
+
+The bar reads the file once at startup. To apply an edit, restart it with:
+
+```sh
+launchctl kickstart -k "gui/$(id -u)/com.omacosy.bar"
+```
+
+Malformed lines are logged and ignored. A well-formed bundle identifier that
+does not resolve to an installed app is unavailable. It blocks shorthand for
+that exact workspace, then the bar falls back to the sole app or the digit.
+Image paths are unsupported because the bar resolves configured app icons at
+startup and does no config-file or image-file I/O while it draws.
+
 - **Apple menu**: About, System Settings, Lock, Sleep, Restart, Shut
   Down, Next Theme (the menu the hidden native bar took away).
 - **Workspaces**: one segmented capsule per monitor showing only that

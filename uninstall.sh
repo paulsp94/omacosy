@@ -59,7 +59,8 @@ rm -rf "/tmp/omacosy-spawn-$(id -u).lock.d"
 rm -f "$HOME/.config/omacosy/ffm-ignore" \
   "$HOME/.config/omacosy/borders.conf" \
   "$HOME/.config/omacosy/apps.conf" \
-  "$HOME/.config/omacosy/gesture.json"
+  "$HOME/.config/omacosy/gesture.json" \
+  "$HOME/.config/omacosy/disabled"
 rmdir "$HOME/.config/omacosy" 2>/dev/null || true
 
 # omacosy-gesture (and the aerospace-swipe era before it: its agent,

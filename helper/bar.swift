@@ -242,13 +242,12 @@ private func loadWorkspaceIconConfig() -> WorkspaceIconConfig {
         let lineNumber = offset + 1
         let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty, !line.hasPrefix("#") else { continue }
-        guard line.filter({ $0 == "=" }).count == 1 else {
+        guard let separator = line.firstIndex(of: "=") else {
             tlog("workspace-icons: malformed line \(lineNumber)")
             continue
         }
-        let parts = line.split(separator: "=", omittingEmptySubsequences: false)
-        let key = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = String(line[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !value.isEmpty else {
             tlog("workspace-icons: malformed line \(lineNumber)")
             continue
@@ -257,8 +256,7 @@ private func loadWorkspaceIconConfig() -> WorkspaceIconConfig {
         let declaration: WorkspaceIconDeclaration?
         if let bundle = BundleIdentifier(value) {
             declaration = .bundle(bundle)
-        } else if value.unicodeScalars.count == 1,
-                  !value.contains("/") {
+        } else if value.unicodeScalars.count == 1 {
             declaration = .glyph(value)
         } else {
             declaration = nil

@@ -176,6 +176,120 @@ func tlog(_ m: String) {
     }
 }
 
+private struct BundleIdentifier {
+    let rawValue: String
+
+    init?(_ rawValue: String) {
+        let segments = rawValue.split(separator: ".", omittingEmptySubsequences: false)
+        guard segments.count >= 2,
+              segments.allSatisfy({ segment in
+                  guard let first = segment.unicodeScalars.first,
+                        BundleIdentifier.isAlphanumeric(first) else { return false }
+                  return segment.unicodeScalars.allSatisfy(BundleIdentifier.isAlphanumericOrHyphen)
+              })
+        else { return nil }
+        self.rawValue = rawValue
+    }
+
+    private static func isAlphanumeric(_ scalar: UnicodeScalar) -> Bool {
+        (48...57).contains(scalar.value) || (65...90).contains(scalar.value)
+            || (97...122).contains(scalar.value)
+    }
+
+    private static func isAlphanumericOrHyphen(_ scalar: UnicodeScalar) -> Bool {
+        isAlphanumeric(scalar) || scalar.value == 45
+    }
+}
+
+private enum WorkspaceIcon {
+    case glyph(String)
+    case image(NSImage)
+    case unavailable
+}
+
+private enum WorkspaceIconDeclaration {
+    case glyph(String)
+    case bundle(BundleIdentifier)
+}
+
+private struct WorkspaceIconConfig {
+    let values: [String: WorkspaceIcon]
+
+    func icon(for workspace: String) -> WorkspaceIcon? {
+        if let icon = values[workspace] { return icon }
+        guard workspace.count > 1,
+              workspace.unicodeScalars.allSatisfy({ (48...57).contains($0.value) }),
+              let last = workspace.unicodeScalars.last,
+              (49...57).contains(last.value)
+        else { return nil }
+        return values[String(Character(last))]
+    }
+}
+
+private func loadWorkspaceIconConfig() -> WorkspaceIconConfig {
+    let file = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/omacosy/workspace-icons.conf")
+    guard FileManager.default.fileExists(atPath: file.path) else {
+        return WorkspaceIconConfig(values: [:])
+    }
+    guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+        tlog("workspace-icons: could not read \(file.path)")
+        return WorkspaceIconConfig(values: [:])
+    }
+
+    var declarations: [String: WorkspaceIconDeclaration] = [:]
+    for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+        let lineNumber = offset + 1
+        let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+        guard let separator = line.firstIndex(of: "=") else {
+            tlog("workspace-icons: malformed line \(lineNumber)")
+            continue
+        }
+        let key = String(line[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !value.isEmpty else {
+            tlog("workspace-icons: malformed line \(lineNumber)")
+            continue
+        }
+
+        let declaration: WorkspaceIconDeclaration?
+        if let bundle = BundleIdentifier(value) {
+            declaration = .bundle(bundle)
+        } else if value.unicodeScalars.count == 1 {
+            declaration = .glyph(value)
+        } else {
+            declaration = nil
+        }
+        guard let declaration else {
+            tlog("workspace-icons: malformed line \(lineNumber)")
+            continue
+        }
+        if declarations[key] != nil {
+            tlog("workspace-icons: duplicate \(key) on line \(lineNumber), last valid value wins")
+        }
+        declarations[key] = declaration
+    }
+
+    var values: [String: WorkspaceIcon] = [:]
+    for (key, declaration) in declarations {
+        switch declaration {
+        case .glyph(let glyph):
+            values[key] = .glyph(glyph)
+        case .bundle(let identifier):
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier.rawValue) else {
+                tlog("workspace-icons: \(key) could not resolve \(identifier.rawValue)")
+                values[key] = .unavailable
+                continue
+            }
+            values[key] = .image(NSWorkspace.shared.icon(forFile: url.path))
+        }
+    }
+    return WorkspaceIconConfig(values: values)
+}
+
+private let workspaceIconConfig = loadWorkspaceIconConfig()
+
 // --- theme ----------------------------------------------------------------
 // The same palette sketchybar reads. Parsed once and kept as colours, not
 // re-sourced per item by sixteen shell scripts.
@@ -2221,13 +2335,17 @@ final class BarView: NSView {
                 NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius).fill()
             }
             let tint: NSColor = ws == surface.visible ? palette.barBG : palette.muted
-            // a workspace holding exactly one app shows that app's icon —
-            // free here, where NSRunningApplication hands the icon over,
-            // versus sketchybar's image-registration dance
-            if let app = model.soleApp[ws], let icon = appIcon(app) {
+            switch workspaceIconConfig.icon(for: ws) {
+            case .some(.glyph(let glyph)):
+                drawIcon(glyph, iconFont, tint, centeredIn: box)
+            case .some(.image(let icon)):
                 icon.draw(in: NSRect(x: box.midX - 9, y: barHeight / 2 - 9, width: 18, height: 18))
-            } else {
-                draw(String(ws.suffix(1)), chipFont, tint, centeredIn: box)
+            case .some(.unavailable), .none:
+                if let app = model.soleApp[ws], let icon = appIcon(app) {
+                    icon.draw(in: NSRect(x: box.midX - 9, y: barHeight / 2 - 9, width: 18, height: 18))
+                } else {
+                    draw(String(ws.suffix(1)), chipFont, tint, centeredIn: box)
+                }
             }
             chipRects.append((ws, slot))
             x += chipBox + chipPad * 2

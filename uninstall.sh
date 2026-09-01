@@ -56,7 +56,12 @@ rm -f /tmp/omacosy-*.log /tmp/omacosy-*.err "/tmp/omacosy-overview-$(id -u).pid"
   /tmp/omacosy-bar-ws /tmp/omacosy-bar-moved /tmp/omacosy-bar-cheatsheet \
   "${TMPDIR:-/tmp}/omacosy-monitor-count"
 rm -rf "/tmp/omacosy-spawn-$(id -u).lock.d"
-rm -rf "$HOME/.config/omacosy"
+rm -f "$HOME/.config/omacosy/ffm-ignore" \
+  "$HOME/.config/omacosy/borders.conf" \
+  "$HOME/.config/omacosy/apps.conf" \
+  "$HOME/.config/omacosy/gesture.json" \
+  "$HOME/.config/omacosy/disabled"
+rmdir "$HOME/.config/omacosy" 2>/dev/null || true
 
 # omacosy-gesture (and the aerospace-swipe era before it: its agent,
 # and its clone ONLY if we made it — a pre-existing install stays)

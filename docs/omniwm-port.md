@@ -184,7 +184,16 @@ requires restoring settings.toml.pre-v1 first.
    its shutdown save overwrites the restore). Do not brew upgrade
    until upstream fixes land (their HEAD commits already target this
    area).
-11. RETRACTED as a 0.6.4 regression; re-diagnosed 2026-08-31. Two real
+11. RESOLVED 2026-09-01, third diagnosis correct: solo windows filled
+   the RAW display because dwindle's singleWindowFit="fill" is defined
+   as the FULLSCREEN frame (SingleWindowFit.usesFullscreenLayoutFrame),
+   and fullscreenUsesOuterGaps=false made that frame edge-to-edge —
+   deterministic config semantics, not a version regression and not
+   poisoning. Fix: fullscreenUsesOuterGaps=true; solo windows and
+   Super+F fullscreen both keep the bar strip now (pixel-verified on
+   both displays); native fullscreen stays edge-to-edge. The earlier
+   retraction text below stands as a record of the wrong turns.
+   RETRACTED as a 0.6.4 regression; re-diagnosed 2026-08-31. Two real
    causes, both version-independent: (a) dwindle `move.*` is
    groupWindow(into: neighbor) BY DESIGN — a directional move STACKS
    into the neighbor's cell (12px member strip), it never swaps; the

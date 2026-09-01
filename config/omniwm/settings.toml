@@ -49,7 +49,7 @@ moveMouseToFocusedWindow = false
 raiseOnMouseFocus = true
 
 [gaps]
-fullscreenUsesOuterGaps = false
+fullscreenUsesOuterGaps = true
 size = 8.0
 
 [gaps.outer]

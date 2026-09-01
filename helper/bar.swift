@@ -2893,6 +2893,17 @@ NotificationCenter.default.addObserver(
         rebuildSurfaces()
         applyShade() // a new display arrives at full output
         kickRebuild()
+        // the 1 s grace can still lose the race with the WM adopting
+        // the new display — its monitor id resolves to nothing and the
+        // screen stays barless (the Dell did, on replug). Same retry
+        // ladder the WM-switch path uses.
+        for delay in [3.0, 8.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                rebuildSurfaces()
+                applyShade()
+                kickRebuild()
+            }
+        }
         let now = NSScreen.screens.count
         guard now != monitorCount else { return }
         let wasSingle = monitorCount == 1

@@ -1,4 +1,6 @@
 .DS_Store
 *.bak.*
+/omacosy-bar.app/
+/omacosy-gesture.app/
 config/apps.local.conf
 config/aerospace/aerospace.toml

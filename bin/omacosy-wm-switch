@@ -109,6 +109,13 @@ omniwm)
   read -r -t 90 -p "  working? " CONFIRM < /dev/tty || true
   if [ "$CONFIRM" = "yes" ]; then
     log "Switch confirmed. OmniWM is your window manager."
+    # ...including at LOGIN: the first reboot of the OmniWM era booted
+    # straight back into AeroSpace because only the login item decides
+    # who owns the session at boot — the switch has to move it too
+    osascript -e 'tell application "System Events"
+      if exists login item "AeroSpace" then delete login item "AeroSpace"
+      if not (exists login item "OmniWM") then make new login item at end with properties {path:"/Applications/OmniWM.app", hidden:false}
+    end tell' 2>/dev/null || true
     log "Way back any time: omacosy-wm-switch aerospace"
   else
     log "No confirmation — REVERTING to AeroSpace"
@@ -123,6 +130,10 @@ omniwm)
   ;;
 aerospace)
   log "Stopping OmniWM, starting the AeroSpace world"
+  osascript -e 'tell application "System Events"
+    if exists login item "OmniWM" then delete login item "OmniWM"
+    if not (exists login item "AeroSpace") then make new login item at end with properties {path:"/Applications/AeroSpace.app", hidden:false}
+  end tell' 2>/dev/null || true
   "$HOME/.local/bin/omacosy-karabiner-omniwm" remove 2>/dev/null || true
   osascript -e 'quit app "OmniWM"' 2>/dev/null || true
   pkill -f OmniWM.app 2>/dev/null || true

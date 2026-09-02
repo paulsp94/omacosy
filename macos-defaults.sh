@@ -20,6 +20,7 @@ record_default() { # domain key
   fi
 }
 record_default NSGlobalDomain _HIHideMenuBar
+record_default NSGlobalDomain SLSMenuBarUseBlurredAppearance
 record_default com.apple.AppleMultitouchTrackpad TrackpadFourFingerVertSwipeGesture
 record_default com.apple.AppleMultitouchTrackpad TrackpadFourFingerHorizSwipeGesture
 record_default com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadFourFingerVertSwipeGesture
@@ -29,6 +30,12 @@ record_default com.apple.dock showMissionControlGestureEnabled
 # One bar, not two: auto-hide the native menu bar (sketchybar takes the top).
 # cfprefsd must be killed so the OS re-reads the pref without a logout.
 defaults write NSGlobalDomain _HIHideMenuBar -bool true
+# "Show menu bar background": Tahoe (26.0-26.2+, unfixed) sometimes
+# reveals the auto-hidden menu bar WITHOUT its glass material — text
+# soup over whatever sits in the strip. An opaque background keeps
+# even a wedged reveal readable. killall SystemUIServer resets a
+# wedge; a Focus mode's menu-bar item is one known trigger.
+defaults write NSGlobalDomain SLSMenuBarUseBlurredAppearance -bool true
 killall cfprefsd 2>/dev/null || true
 sleep 1
 killall SystemUIServer 2>/dev/null || true

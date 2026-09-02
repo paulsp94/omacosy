@@ -206,6 +206,16 @@ clickable (app menus were unreachable before that fix). It drops back
 behind everything when the pointer leaves. Under OmniWM the bar simply
 stays visible in its reserved strip and never plays this game.
 
+### Known macOS quirk: the revealed menu bar
+
+macOS Tahoe (26.0-26.2+, unfixed upstream) sometimes reveals the
+auto-hidden native menu bar without its glass background — floating
+text over the bar's strip. `macos-defaults.sh` turns "show menu bar
+background" on so even that state stays readable; `killall
+SystemUIServer` resets a stuck reveal. A Focus mode set to show its
+menu-bar icon is one confirmed trigger — "Don't Show in Menu Bar" in
+its Control Center settings avoids it.
+
 ### Workspace icons
 
 You can set workspace icons in the optional

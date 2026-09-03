@@ -6,8 +6,9 @@
 //
 // Event-driven via private SkyLight window-server notifications (the
 // same layer JankyBorders and yabai use, verified on macOS 26.3):
-// front-app changes, window create/destroy, and per-window move/resize
-// all arrive as callbacks the instant the WindowServer processes them.
+// front-app changes, window raise/reorder, window create/destroy and
+// per-window move/resize all arrive as callbacks the instant the
+// WindowServer processes them.
 // A 0.5s heartbeat remains as a safety net for anything eventless,
 // and kqueue watches cover theme/config changes. Notify procs only
 // fire while the connection's event port is drained — see the
@@ -49,6 +50,12 @@ func GetProcessPID(_ psn: inout PSN, _ pid: inout pid_t) -> OSStatus
 
 let EVENT_WINDOW_MOVE: UInt32 = 806
 let EVENT_WINDOW_RESIZE: UInt32 = 807
+// A same-app focus switch only raises a window: nothing moves, nothing
+// is created. FRONT_CHANGE fires but lands ~16ms BEFORE the reorder is
+// applied, so its tick still reads the old topmost window. These two
+// announce the reorder itself.
+let EVENT_WINDOW_ORDER: UInt32 = 808
+let EVENT_WINDOW_VISIBILITY: UInt32 = 815
 let EVENT_WINDOW_CREATE: UInt32 = 1325
 let EVENT_WINDOW_DESTROY: UInt32 = 1326
 let EVENT_FRONT_CHANGE: UInt32 = 1508
@@ -109,11 +116,19 @@ func loadColor() -> CGColor {
 // Drag storms tick at display cadence; a full window-list walk per
 // tick is wasted main-thread time there. Mid-storm (ticks <100ms
 // apart) the previous hit's window id is re-queried directly, with a
-// full re-scan forced every 250ms so a same-app topmost change can't
-// go stale for more than a beat.
+// full re-scan forced every 250ms as a backstop.
 var lastWid: UInt32 = 0
 var lastTickAt = Date.distantPast
 var lastFullScanAt = Date.distantPast
+// Set by any event that could change WHICH window is focused; while set,
+// the mid-storm shortcut below is skipped in favour of the full scan.
+// It has to be: that shortcut only checks that lastWid is still a live,
+// layer-0 window of the frontmost app, and all of that stays true of the
+// window focus just moved away from within one app — so the window you
+// left kept passing the check and stayed ringed until the 0.25s rescan.
+// Moves and resizes can't change which window is focused, so they leave
+// the flag clear and drags keep the shortcut.
+var focusMayHaveChanged = true
 
 // frontmost app's topmost normal window, in CG (top-left) coordinates
 func focusedWindowFrame() -> (CGRect, String)? {
@@ -127,7 +142,7 @@ func focusedWindowFrame() -> (CGRect, String)? {
     let now = Date()
     let storm = now.timeIntervalSince(lastTickAt) < 0.1
     lastTickAt = now
-    if storm, lastWid != 0, now.timeIntervalSince(lastFullScanAt) < 0.25,
+    if storm, !focusMayHaveChanged, lastWid != 0, now.timeIntervalSince(lastFullScanAt) < 0.25,
         let list = CGWindowListCopyWindowInfo(.optionIncludingWindow, lastWid) as? [[String: Any]],
         let w = list.first,
         (w["kCGWindowLayer"] as? Int) == 0,
@@ -139,6 +154,7 @@ func focusedWindowFrame() -> (CGRect, String)? {
         return (CGRect(x: x, y: y, width: wd, height: h), name)
     }
     lastFullScanAt = now
+    focusMayHaveChanged = false
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
         kCGNullWindowID) as? [[String: Any]] else { return nil }
     for w in list { // front-to-back
@@ -217,10 +233,18 @@ func safeTop(for d: CGRect) -> CGFloat {
 // ring vanished and the shroud black-banded the bar's strip. Until the
 // gap bug is fixed, OmniWM mode keeps ring and strip, accepting ring
 // overlap on a true fullscreen window.
+
+// Cached for 0.5s: the lookup walks every running app (0.36ms) and runs
+// twice per tick, which adds up across a drag.
+var omniwmCached = false
+var omniwmCheckedAt = Date.distantPast
 func omniwmActive() -> Bool {
-    NSWorkspace.shared.runningApplications.contains {
+    if Date().timeIntervalSince(omniwmCheckedAt) < 0.5 { return omniwmCached }
+    omniwmCheckedAt = Date()
+    omniwmCached = NSWorkspace.shared.runningApplications.contains {
         $0.bundleIdentifier == "com.barut.OmniWM"
     }
+    return omniwmCached
 }
 
 func isFullscreen(_ r: CGRect) -> Bool {
@@ -558,6 +582,7 @@ func watch(_ path: String, create: Bool, handler: @escaping () -> Void) {
 // drag until the ghosts are already ringed
 watch("/tmp/omacosy-ws-switch", create: true) {
     lastWsSwitchAt = Date()
+    focusMayHaveChanged = true // the target workspace has its own focus
     hideRing("workspace-switch")
     syncShroud(nil) // the next tick re-covers if the target is fullscreen too
 }
@@ -602,11 +627,16 @@ let slsCallback: NotifyProc = { event, _, _, _ in
     if event == EVENT_WINDOW_CREATE || event == EVENT_WINDOW_DESTROY {
         rebuildSubscriptions()
     }
+    // anything but a move/resize can change which window is focused
+    if event != EVENT_WINDOW_MOVE, event != EVENT_WINDOW_RESIZE {
+        focusMayHaveChanged = true
+    }
     noteStat(event: true)
     kickTick()
 }
 
-for code in [EVENT_WINDOW_MOVE, EVENT_WINDOW_RESIZE, EVENT_WINDOW_CREATE,
+for code in [EVENT_WINDOW_MOVE, EVENT_WINDOW_RESIZE, EVENT_WINDOW_ORDER,
+             EVENT_WINDOW_VISIBILITY, EVENT_WINDOW_CREATE,
              EVENT_WINDOW_DESTROY, EVENT_FRONT_CHANGE] {
     _ = SLSRegisterNotifyProc(slsCallback, code, nil)
 }

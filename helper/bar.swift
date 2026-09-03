@@ -2746,9 +2746,21 @@ final class BarView: NSView {
         }
     }
 
+    // A trackpad flick delivers dozens of precise events plus a momentum
+    // tail; stepping 5% on each raced through the whole range. Momentum is
+    // dropped and precise deltas accumulate until a notch's worth of finger
+    // travel has passed — a clicky wheel already arrives one notch at a time.
+    private var scrollAccum: CGFloat = 0
+
     override func scrollWheel(with event: NSEvent) {
         guard let name = hit(event) else { return }
-        let step = event.scrollingDeltaY > 0 ? 5 : -5
+        if !event.momentumPhase.isEmpty { return }
+        if event.phase == .began { scrollAccum = 0 }
+        scrollAccum += event.scrollingDeltaY
+        let notch: CGFloat = event.hasPreciseScrollingDeltas ? 20 : 1
+        if abs(scrollAccum) < notch { return }
+        let step = scrollAccum > 0 ? 5 : -5
+        scrollAccum = 0
         switch name {
         case "volume":
             guard let v = readVolume() else { return }

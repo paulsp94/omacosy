@@ -3560,8 +3560,8 @@ for event in [NSWorkspace.didLaunchApplicationNotification,
 func scheduleClock() {
     updateClock()
     let now = Date()
-    let nextMinute = Calendar.current.date(bySetting: .second, value: 0,
-                                           of: now.addingTimeInterval(60)) ?? now.addingTimeInterval(60)
+    let nextMinute = Calendar.current.nextDate(after: now, matching: DateComponents(second: 0),
+                                               matchingPolicy: .nextTime) ?? now.addingTimeInterval(60)
     DispatchQueue.main.asyncAfter(deadline: .now() + max(1, nextMinute.timeIntervalSinceNow)) { scheduleClock() }
 }
 scheduleClock()

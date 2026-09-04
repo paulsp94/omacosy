@@ -15,8 +15,9 @@ macos-titlebar-style = hidden
 window-width = 100
 window-height = 30
 
-# Every Super+Enter opens a NEW Ghostty instance (`open -na` — one app
-# per window, which is what makes each window a first-class tile).
-# Without this, closing the window leaves its windowless instance
-# running forever: ten stale ghostty processes after a day's work.
+# Super+Enter asks the running instance for the window, so the windows
+# share one process and only a cold start goes through `open -na`.
+# Without this, closing the last one leaves a windowless instance running
+# forever — and back when every window was its own `open -na` instance,
+# that meant ten stale ghostty processes after a day's work.
 quit-after-last-window-closed = true

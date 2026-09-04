@@ -15,6 +15,32 @@
 APP="$1"
 [ -n "$APP" ] || exit 1
 
+# A new Ghostty window can come from the instance that is already
+# running. `open -na` is a whole second app instance every time — a full
+# app launch, ~300 ms with one already warm and worse with none — while
+# Ghostty 1.3's scripting dictionary hands one over in ~140 ms. Ghostty
+# is the terminal this repo ships and Super+Enter is the most pressed
+# chord in the map, so it earns the special case.
+#
+# Everything else, and a Ghostty that is not running yet, goes through
+# open(1): addressing an app that is down would launch it AND let it
+# open its own initial window, which is two windows for one press.
+# Ghostty before 1.3 has no dictionary and raises, landing there too.
+# The directory is pinned to $HOME because that is where open(1) starts
+# one; inheriting the focused window's directory would be a behaviour
+# change riding along with a speed-up.
+spawn_app() {
+  if [ "$1" = Ghostty ] && /usr/bin/osascript \
+    -e 'if application "Ghostty" is running then' \
+    -e "tell application \"Ghostty\" to new window with configuration {initial working directory:\"$HOME\"}" \
+    -e 'else' \
+    -e 'error "Ghostty is not running"' \
+    -e 'end if' >/dev/null 2>&1; then
+    return 0
+  fi
+  open -na "$1"
+}
+
 # macOS ships no flock; mkdir is the portable atomic lock. Both WM
 # paths need the same serialization, so it is taken ONCE here. A
 # holder that died is stolen after ~5s so the terminal key can never
@@ -56,7 +82,7 @@ if wm_is_omniwm; then
   # never shows a window cannot wedge the terminal key.
   "$OMNI" wait-window "$before" 2000 >/dev/null 2>&1 &
   waiter=$!
-  open -na "$APP"
+  spawn_app "$APP"
   wait "$waiter" 2>/dev/null || true
   exit 0
 fi
@@ -66,7 +92,7 @@ STATE="/tmp/omacosy-split-state-$(id -u)"
 
 prev=0
 [ -f "$STATE" ] && prev=$(cut -d' ' -f1 "$STATE")
-open -na "$APP"
+spawn_app "$APP"
 for _ in $(seq 40); do
   cur=0
   [ -f "$STATE" ] && cur=$(cut -d' ' -f1 "$STATE")

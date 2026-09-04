@@ -15,6 +15,16 @@ macos-titlebar-style = hidden
 window-width = 100
 window-height = 30
 
+# ...and because that pinned size is not the tile, the WM resizes every
+# new window the moment it appears. Ghostty's default `after-first`
+# suppresses the size badge only on creation and shows it for any resize
+# AFTER that, so the tiling resize qualified — and so did every re-tile
+# when a sibling window opened or closed. The result was "NNxMM" in the
+# middle of the window for 750 ms, over and over. A compositor never
+# trips this, because it sizes the window before mapping it; an
+# Accessibility-API tiler always does.
+resize-overlay = never
+
 # Every Super+Enter opens a NEW Ghostty instance (`open -na` — one app
 # per window, which is what makes each window a first-class tile).
 # Without this, closing the window leaves its windowless instance

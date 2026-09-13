@@ -341,6 +341,7 @@ link "$REPO_DIR/bin/omacosy-wm-switch" "$HOME/.local/bin/omacosy-wm-switch"
 link "$REPO_DIR/bin/omacosy-karabiner-omniwm" "$HOME/.local/bin/omacosy-karabiner-omniwm"
 link "$REPO_DIR/bin/omacosy-layout" "$HOME/.local/bin/omacosy-layout"
 link "$REPO_DIR/bin/omacosy-float" "$HOME/.local/bin/omacosy-float"
+link "$REPO_DIR/bin/omacosy-finder-window" "$HOME/.local/bin/omacosy-finder-window"
 link "$REPO_DIR/bin/omacosy-cycle" "$HOME/.local/bin/omacosy-cycle"
 
 # --- 3. omarchy theme convention -------------------------------------------

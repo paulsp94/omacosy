@@ -78,7 +78,7 @@ grant hide themselves rather than half-work.
 | **Screen Recording** | `omacosy-overview` | Captures a thumbnail per window for the overview cards, including windows the window manager has stashed offscreen. A screenshot of the visible screen could not see those. | Cards fall back to app icons and titles. |
 | **Bluetooth** | `omacosy-bar` | Reads adapter power and the paired-device list for the bluetooth pill and its menu. | The pill hides itself. |
 | **Location** | `omacosy-bar` | Reads **only** the wi-fi network's name, which macOS classes as location data. No coordinate is ever requested; the authorisation itself is what unlocks `CWInterface.ssid()`. | The wi-fi popup's title row reads "wi-fi" instead of your network's name. Everything else is unaffected. |
-| **Automation** | `omacosy-bar`, `theme-set` | Apple Events to **Spotify** (what is playing; play/pause/next from the media pill) and to **System Events** (sleep, lock and restart from the Apple menu; setting the wallpaper). | The media pill hides; those menu rows do nothing. |
+| **Automation** | `omacosy-bar`, `theme-set`, `omacosy-finder-window` | Apple Events to **Spotify** (what is playing; play/pause/next from the media pill), to **System Events** (sleep, lock and restart from the Apple menu; setting the wallpaper) and to **Finder** (a new window for `Super+Shift+F`). | The media pill hides; those menu rows do nothing; `Super+Shift+F` opens no window. |
 | **Files and Folders** | `omacosy-bar` | Only if your clone lives in `~/Documents`, `~/Desktop` or `~/Downloads`. The bar reads its palette from the theme directory inside the repo, and macOS walls launchd agents off from those folders. | The bar **hangs at startup** waiting on the prompt. Clone to `~/.local/share/omacosy` and this never comes up. |
 
 More on **Location**, because it sounds worse than it is: it buys
@@ -318,7 +318,7 @@ typing or app shortcuts. Caps Lock tapped alone is Escape.
 | **Apps and system** | |
 | `Super+enter` / `Super+shift+enter` | terminal / browser |
 | `Super+space` | launcher (Raycast; the OmniWM option opens OmniWM's command palette instead) |
-| `Super+shift+f` / `+m` / `+g` | files / music / messenger (set in `apps.conf`) |
+| `Super+shift+f` / `+m` / `+g` | files / music / messenger (set in `apps.conf`); files opens a NEW Finder window on every press |
 | `Super+shift+t` | next theme |
 | `Super+shift+b` | next wallpaper of the current theme |
 | `Super+shift+l` | lock the screen |
@@ -329,6 +329,15 @@ typing or app shortcuts. Caps Lock tapped alone is Escape.
 Screenshots, clipboard and app switching stay macOS's own
 (`Cmd+Shift+3/4/5`, `Cmd+C/V`, `Cmd+Tab`). `Alt+Tab` above is the
 *window*-scoped switcher macOS lacks.
+
+**The files key gives a new window every time.** `open ~` raises the Finder
+window you already have rather than making another, so the key could only
+ever produce one. `omacosy-finder-window` asks Finder for a *window*
+instead, which costs the Automation permission for Finder on first use. It
+spawns through `omacosy-spawn --cmd <command...>`, the same lock
+`Super+Enter` takes, so a burst of presses still splits one slot at a time
+instead of landing in one flat row. Finder will not draw a window below 474
+points wide, which is Finder's own floor and not a tiling fault.
 
 **On the modifier space.** omarchy layers `Super+Ctrl` and `Super+Alt`
 on top of `Super`. This setup cannot: Super IS `cmd+ctrl+alt`, so those

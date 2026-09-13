@@ -1,0 +1,62 @@
+#!/bin/sh
+# omacosy-finder-window — open a NEW Finder window on the CURRENT workspace.
+#
+# What Super+Shift+F used to run was `open ~`, which has two problems.
+#
+# `open <dir>` RAISES an existing window for that directory rather than
+# making a new one, and the binding always asks for the home folder, so it
+# can only ever produce ONE Finder window. Measured from no windows open:
+#
+#   open ~             -> 1 window
+#   open ~ again       -> 1 window
+#   open ~/Downloads   -> 2 windows, tiled side by side
+#
+# The limit was never Finder or AeroSpace. It was asking for the same
+# folder twice.
+#
+# Raising that window also ACTIVATES Finder, and AeroSpace follows the
+# frontmost app to whichever workspace its window is on. So the key drags
+# the desktop to wherever a Finder window already lives, and anything
+# opened after that lands there instead of where you were.
+#
+# `open -n` is not the answer. For Finder it fails with "Launch failed" and
+# takes the existing window down with it. Measured twice.
+#
+# ORDER MATTERS in what follows.
+#
+# `activate` has to come AFTER the window exists. Without it at all, the
+# window appears but Finder is never brought forward, no focus change
+# fires, and `omacosy-helper split-hint` never runs — so AeroSpace appends
+# the window to the existing row instead of splitting the focused slot.
+# Measured: split-hint ran 0 times against 1 for a normal `open -n -a`.
+#
+# Activating after the window exists is what keeps the workspace still:
+# Finder comes forward with the NEW window frontmost, and that window is
+# already here, so AeroSpace has nowhere to follow it to.
+#
+# KNOWN LIMIT, not fixable here: a Finder window will not go below 474
+# points wide. Asked for 300 through AppleScript, it returns 474. In a
+# narrower slot its windows overlap and run off the display. The same slots
+# with a terminal gave an exact fit. Three Finder windows suit a 1440-point
+# display (3 x 474 = 1422); two beside another app do not.
+#
+# Needs an Automation grant ("... wants to control Finder"), once, on first
+# use. That is the trade for the two bugs above.
+#
+# Through omacosy-spawn, not straight at osascript. The window is made
+# the instant this runs, but `omacosy-helper split-hint` only runs when
+# AeroSpace reports a focus change, so a burst of key presses creates
+# every window before the first hint can shape any of them. Measured on
+# a 1440-point display holding one other window: four at once ran the
+# hint ONCE and gave five equal 285-point columns, and the same four
+# through the lock ran it four times and split each slot in turn.
+#
+# The lock lives in omacosy-spawn because Super+Enter needs it too.
+# `--cmd` is there because Finder cannot be opened with `open -na`.
+#
+# >/dev/null: osascript echoes the folder it set.
+exec "$HOME/.local/bin/omacosy-spawn" --cmd osascript -e 'tell application "Finder"
+  set w to make new Finder window
+  set target of w to path to home folder
+  activate
+end tell' >/dev/null

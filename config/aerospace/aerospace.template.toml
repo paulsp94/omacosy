@@ -187,7 +187,7 @@ cmd-ctrl-alt-shift-o = 'exec-and-forget $HOME/.local/bin/omacosy-ws 0 throw'
 cmd-ctrl-alt-shift-space = 'exec-and-forget $HOME/.local/bin/omacosy-ws 0 throw-all'
 
 # Apps (omarchy: Super+Shift+letter)
-cmd-ctrl-alt-shift-f = 'exec-and-forget open ~'          # files
+cmd-ctrl-alt-shift-f = 'exec-and-forget $HOME/.local/bin/omacosy-finder-window' # files
 cmd-ctrl-alt-shift-m = 'exec-and-forget open -a "@MUSIC@"' # music
 cmd-ctrl-alt-shift-g = 'exec-and-forget open -a "@MESSENGER@"'   # messenger (omarchy: G)
 

@@ -1,6 +1,8 @@
 #!/bin/bash
 # omacosy-spawn <App> — open a new window of App, serialized so the
 # dwindle split hint keeps up.
+# omacosy-spawn --cmd <command...> — the same serialization for a
+# window that `open -na` cannot make.
 #
 # The split hint runs AFTER a window exists (on-focus-changed), so two
 # windows created at the same instant both land before any hint can
@@ -12,8 +14,21 @@
 # Spam then becomes a rapid, clean sequence instead of a simultaneous
 # mess. Worst case the wait gives up after 2s so a broken hint chain
 # can never wedge the terminal key.
-APP="$1"
-[ -n "$APP" ] || exit 1
+#
+# --cmd exists because of Finder. Finder is always running, so
+# `open -na Finder` fails with "Launch failed"; a new Finder window
+# takes AppleScript instead. That spawn needs this lock exactly as
+# much: measured, four at once ran the split hint ONCE and left five
+# windows in one flat row. Only the command differs, so only the
+# command is a parameter.
+if [ "${1:-}" = "--cmd" ]; then
+  shift
+  [ "$#" -gt 0 ] || exit 1
+  SPAWN=("$@")
+else
+  [ -n "${1:-}" ] || exit 1
+  SPAWN=(open -na "$1")
+fi
 
 # macOS ships no flock; mkdir is the portable atomic lock. Both WM
 # paths need the same serialization, so it is taken ONCE here. A
@@ -56,7 +71,7 @@ if wm_is_omniwm; then
   # never shows a window cannot wedge the terminal key.
   "$OMNI" wait-window "$before" 2000 >/dev/null 2>&1 &
   waiter=$!
-  open -na "$APP"
+  "${SPAWN[@]}"
   wait "$waiter" 2>/dev/null || true
   exit 0
 fi
@@ -66,7 +81,7 @@ STATE="/tmp/omacosy-split-state-$(id -u)"
 
 prev=0
 [ -f "$STATE" ] && prev=$(cut -d' ' -f1 "$STATE")
-open -na "$APP"
+"${SPAWN[@]}"
 for _ in $(seq 40); do
   cur=0
   [ -f "$STATE" ] && cur=$(cut -d' ' -f1 "$STATE")

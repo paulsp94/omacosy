@@ -285,6 +285,21 @@ startup and does no config-file or image-file I/O while it draws.
 - **Floats**: appears only while the workspace holds floating windows;
   click surfaces the next one.
 
+Weather defaults to Celsius and uses the public IP address for location,
+so it follows a VPN exit node. Override either preference without editing
+the repo:
+
+```bash
+omacosy-weather unit fahrenheit
+omacosy-weather location 10001
+omacosy-weather location "Chicago"
+omacosy-weather location auto       # follow the VPN/public IP again
+omacosy-weather status
+```
+
+The command restarts only the bar so the next weather fetch uses the new
+preference immediately. Settings live in `~/.config/omacosy/weather.json`.
+
 ## Keybindings — Super = hold Caps Lock
 
 Karabiner remaps Caps Lock to `cmd+ctrl+alt` (a combo macOS never

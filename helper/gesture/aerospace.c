@@ -443,6 +443,11 @@ static bool aerospace_open_socket(aerospace* client, int attempts)
 
 aerospace* aerospace_new(const char* socketPath)
 {
+	return aerospace_new_attempts(socketPath, 0);
+}
+
+aerospace* aerospace_new_attempts(const char* socketPath, int attempts)
+{
 	aerospace* client = malloc(sizeof(aerospace));
 	if (!client)
 		fatal_error("Failed to allocate AeroSpace client");
@@ -464,7 +469,9 @@ aerospace* aerospace_new(const char* socketPath)
 	// AeroSpace may not be ready when we start (e.g. at login). Retry the
 	// connect with bounded backoff before giving up and falling back to CLI,
 	// otherwise we get stuck in CLI mode for the entire session.
-	if (!aerospace_open_socket(client, SOCKET_CONNECT_MAX_ATTEMPTS)) {
+	if (attempts <= 0)
+		attempts = SOCKET_CONNECT_MAX_ATTEMPTS;
+	if (!aerospace_open_socket(client, attempts)) {
 		int why = errno;
 		fprintf(stderr, WARN_CLI_FALLBACK, client->socket_path, strerror(why), why);
 		client->use_cli_fallback = true;

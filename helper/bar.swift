@@ -3415,6 +3415,16 @@ watch(FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".config/omarchy/current").path, create: false) {
     let t0 = DispatchTime.now().uptimeNanoseconds
     palette = loadPalette()
+    // The activity chip is the one right-hand item built ONCE at startup
+    // instead of by an updater, so its colour was copied out of the palette
+    // then and nothing ever refreshed it. Every other item is rewritten by
+    // its own updater — battery, wifi, clock — and picks the new accent up on
+    // its next tick. This one kept the accent of whatever theme was current
+    // when the bar started, so after a theme switch it sat in the old colour
+    // while the Apple logo and the app name moved to the new one.
+    // set() compares before it repaints, so re-applying an unchanged accent
+    // costs nothing.
+    set("activity") { $0.iconColor = palette.accent }
     iconCache.removeAll()
     repaint()
     if cheatWindow != nil { hideCheatsheet(); toggleCheatsheet() } // repaint in the new palette

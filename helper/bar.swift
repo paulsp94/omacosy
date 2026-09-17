@@ -3254,6 +3254,14 @@ for event in [NSWorkspace.didLaunchApplicationNotification,
 NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
 ) { note in
+    // OmniWM.app is LSUIElement, so NSWorkspace never posts didLaunch or
+    // didTerminate for it and the WM observer below cannot see a switch. The
+    // workspace-bar watch was therefore only ever established at startup,
+    // which is why a bar restart was the only cure for pills frozen on the
+    // other manager's state. Reconcile here instead: this fires on every app
+    // activation, and both calls are no-ops when the state already agrees.
+    if omniwmActive() { startOmniWatch() } else { stopOmniWatch() }
+
     let t0 = DispatchTime.now().uptimeNanoseconds
     guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
           let name = app.localizedName, name != model.frontApp,

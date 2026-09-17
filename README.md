@@ -411,6 +411,16 @@ and another window may grab focus before the hint lands. One hook
 covers both hover and keyboard focus: AeroSpace notices the focus
 `omacosy-ffm` moves, even though ffm moves it through SkyLight.
 
+A refocus is the one case that does not wait: an existing window
+usually sits in its slot already, so its frame is read at once. It is
+then watched for a moment anyway, because a refocus can also follow a
+window leaving. Close the second of two windows and the survivor takes
+focus before AeroSpace has re-expanded it, so the read catches its old
+half slot. If the frame changes, the settled frame decides and the hint
+is issued again, which nobody sees: the window is its container's only
+child at that point, and `split` on an only child just turns the
+container.
+
 Manual control (Super+J flips, resize, float) works unchanged.
 
 Floats get a rescue path, because macOS will not keep them on top:

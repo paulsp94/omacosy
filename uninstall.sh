@@ -120,6 +120,24 @@ restore() {
   fi
 }
 
+# --- ~/.zshrc stub: remove it only when it is exactly what we wrote --------
+# BEFORE the copied-config sweep below: a stock install from a
+# TCC-protected clone marked ~/.zshrc as a copied config, and that rm -rf
+# would take the stub together with any line the user appended to it.
+zshrc_unstub() {
+  local zshrc="$HOME/.zshrc" orig="$HOME/.local/state/omacosy/zshrc-stub.orig"
+  have "wrote-zshrc-stub" || return 0
+  [ -f "$zshrc" ] && [ ! -L "$zshrc" ] || return 0
+  if [ -f "$orig" ] && cmp -s "$zshrc" "$orig"; then
+    rm -f "$zshrc"                  # untouched, and ours to remove
+  else
+    local bak="$zshrc.omacosy-stub.bak.$(date +%Y%m%d%H%M%S)"
+    log "~/.zshrc has lines added since install — kept at $bak"
+    mv "$zshrc" "$bak"
+  fi
+}
+zshrc_unstub
+
 # configs COPIED for TCC-protected clones are ours to delete; the
 # restore() calls below then bring back backups / displaced symlinks
 grep '^copied-config ' "$MANIFEST" 2>/dev/null | sed 's/^copied-config //' |
@@ -130,6 +148,22 @@ restore "$HOME/.config/starship.toml"
 restore "$HOME/.config/aerospace"
 restore "$HOME/.config/omniwm"
 restore "$HOME/.config/ghostty"
+
+# --- ~/.zshrc.local ---------------------------------------------------------
+# Ours to remove ONLY when we created it and it is still an exact copy of
+# the file just restored. Anything else is the user's, and is kept.
+LOCAL_RC="$HOME/.zshrc.local"
+if [ -e "$LOCAL_RC" ]; then
+  if have "created-zshrc-local" && [ -f "$HOME/.zshrc" ] \
+     && cmp -s "$LOCAL_RC" "$HOME/.zshrc"; then
+    rm -f "$LOCAL_RC"
+    log "Removed ~/.zshrc.local — an exact copy of your restored ~/.zshrc"
+  else
+    log "Kept ~/.zshrc.local. Nothing sources it now. To keep using it, add"
+    log "to your ~/.zshrc:"
+    log '    [ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+  fi
+fi
 
 # re-enable Karabiner's helper agents we disabled
 for agent in Karabiner-Menu Karabiner-NotificationWindow; do

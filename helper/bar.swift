@@ -601,6 +601,11 @@ struct BarItem: Equatable {
 
 // screen order, left to right
 let rightOrder = ["weather", "wifi", "bluetooth", "brightness", "volume", "battery", "clock", "activity"]
+// Pills that are SQUARE when they carry an icon and nothing else, so the
+// two ends of the bar read as one shape with the apple pill. A label
+// still flows icon-then-text: the bluetooth count and "off" need the
+// room, and a square would clip them.
+let squarePills: Set<String> = ["wifi", "bluetooth", "activity"]
 var rightItems: [String: BarItem] = [:]
 
 func set(_ name: String, _ mutate: (inout BarItem) -> Void) {
@@ -2556,7 +2561,9 @@ final class BarView: NSView {
         // apple pill: the system menu the hidden native menu bar carried
         let appleGlyph = "\u{f179}"
         let appleFont = nerdFont("Bold", 15)
-        let appleW = inkBox(appleGlyph, appleFont).width + 20
+        // A square, like the icon-only pills at the other end. The left
+        // edge stays at padLeft, so only the inner edge moves.
+        let appleW = pillHeight
         let apple = NSRect(x: padLeft, y: (barHeight - pillHeight) / 2, width: appleW, height: pillHeight)
         palette.itemBG.setFill()
         NSBezierPath(roundedRect: apple, xRadius: radius, yRadius: radius).fill()
@@ -2641,15 +2648,17 @@ final class BarView: NSView {
             let iconInk = hasIcon ? inkBox(item.icon, iconFont).width : 0
             let labelAdv = hasLabel ? advance(item.label, labelFont) : 0
             let innerGap: CGFloat = hasIcon && hasLabel ? 7 : 0
-            let width = 10 + iconInk + innerGap + labelAdv + 10
+            let square = squarePills.contains(name) && hasIcon && !hasLabel
+            let width = square ? pillHeight : 10 + iconInk + innerGap + labelAdv + 10
             let pill = NSRect(x: cursor - width, y: (barHeight - pillHeight) / 2,
                               width: width, height: pillHeight)
             palette.itemBG.setFill()
             NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius).fill()
             if hasIcon {
                 drawIcon(item.icon, iconFont, iconColor,
-                         centeredIn: NSRect(x: pill.minX + 10, y: pill.minY,
-                                            width: iconInk, height: pill.height))
+                         centeredIn: square ? pill
+                             : NSRect(x: pill.minX + 10, y: pill.minY,
+                                      width: iconInk, height: pill.height))
             }
             if hasLabel {
                 drawText(item.label, labelFont, palette.label,

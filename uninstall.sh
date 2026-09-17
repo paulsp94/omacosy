@@ -58,6 +58,7 @@ rm -f /tmp/omacosy-*.log /tmp/omacosy-*.err "/tmp/omacosy-overview-$(id -u).pid"
 rm -rf "/tmp/omacosy-spawn-$(id -u).lock.d"
 rm -f "$HOME/.config/omacosy/ffm-ignore" \
   "$HOME/.config/omacosy/borders.conf" \
+  "$HOME/.config/omacosy/bar.conf" \
   "$HOME/.config/omacosy/apps.conf" \
   "$HOME/.config/omacosy/gesture.json" \
   "$HOME/.config/omacosy/disabled"

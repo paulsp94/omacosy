@@ -34,8 +34,21 @@ path = os.environ["KARABINER"]
 mark = os.environ["MARK"]
 action = sys.argv[1]
 
+# Karabiner runs ONE shell_command at a time and SIGKILLs the one still
+# running when the next key arrives. Measured on five fast Super+Enter
+# presses: four shells died inside 200 ms each, the fifth survived, and
+# a single window appeared 13 s later — the four dead ones had left the
+# spawn lock behind them. aerospace never had this because exec-and-forget
+# detaches. Backgrounding gives Karabiner a child that exits at once, and
+# the work continues in a process it holds no pid for. Serialization is
+# not lost: omacosy-spawn's lock is what orders a burst, and it can only
+# do that if the spawns live long enough to queue.
+def detached(cmd):
+    return "{ " + cmd + " ; } >/dev/null 2>&1 &"
+
+
 def rule(desc, key, mods, cmd=None, to_key=None, to_mods=None):
-    to = [{"shell_command": cmd}] if cmd else [{"key_code": to_key, "modifiers": to_mods or []}]
+    to = [{"shell_command": detached(cmd)}] if cmd else [{"key_code": to_key, "modifiers": to_mods or []}]
     return {
         "description": f"{mark}: {desc}",
         "manipulators": [{

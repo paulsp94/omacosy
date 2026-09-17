@@ -55,16 +55,43 @@ spawn_app() {
 }
 
 # macOS ships no flock; mkdir is the portable atomic lock. Both WM
-# paths need the same serialization, so it is taken ONCE here. A
-# holder that died is stolen after ~5s so the terminal key can never
-# go dead.
+# paths need the same serialization, so it is taken ONCE here.
+#
+# The holder writes its pid inside, because a spawn really does get
+# killed outright: Karabiner runs one shell_command at a time and
+# SIGKILLs the one still running when the next key arrives. SIGKILL
+# runs no EXIT trap, so a lock without an owner recorded in it outlives
+# the process that took it, and every later press then waits on
+# something that is already gone. A waiter that finds a dead holder
+# clears the lock immediately instead. The pid lands just after the
+# mkdir, so an empty one is re-read after a beat before it counts.
+#
+# The give-up timer is wall clock. The old one counted 120 sleeps of
+# 0.05 and called that 5 s; a turn really costs ~130 ms, so it did not
+# fire until 13 s. It also fell through and ran WITHOUT the lock while
+# its trap still removed whatever lock it found, including one another
+# spawn was holding. Releasing is now owner-checked, so falling through
+# is harmless.
 LOCK="/tmp/omacosy-spawn-$(id -u).lock.d"
-for i in $(seq 120); do
-  mkdir "$LOCK" 2>/dev/null && break
-  [ "$i" -ge 100 ] && { rm -rf "$LOCK"; }
+read_owner() { owner=""; [ -r "$LOCK/pid" ] && read -r owner < "$LOCK/pid"; }
+trap 'read_owner; [ "$owner" = "$$" ] && rm -rf "$LOCK"' EXIT
+give_up=$(( SECONDS + 8 ))
+turns=0
+while :; do
+  mkdir "$LOCK" 2>/dev/null && { echo $$ > "$LOCK/pid"; break; }
+  read_owner
+  [ -z "$owner" ] && { sleep 0.05; read_owner; }
+  stale=no
+  case "$owner" in
+    ""|*[!0-9]*) stale=yes ;;
+    *) kill -0 "$owner" 2>/dev/null || stale=yes ;;
+  esac
+  [ "$SECONDS" -ge "$give_up" ] && stale=yes
+  [ "$stale" = yes ] && { rm -rf "$LOCK"; continue; }
+  turns=$(( turns + 1 ))
+  [ "$turns" -gt 400 ] && break   # never wedge the key: go on unlocked
   sleep 0.05
 done
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
 # Under OmniWM the split is native, but its insertion side is not
 # omarchy's: with smartSplit off a new window goes RIGHT in horizontal

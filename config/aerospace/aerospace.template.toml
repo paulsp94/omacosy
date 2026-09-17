@@ -60,10 +60,17 @@ inner.vertical = 8
 outer.left = 8
 outer.bottom = 8
 outer.right = 8
-# room for the bar: measured from the display top on flat monitors,
-# but from below the notch strip on built-in notched displays (macOS
-# reports usable space starting there), so the laptop needs less
-outer.top = [{ monitor.'built-in' = 10 }, 42]
+# room for the bar, sized at install time from the built-in display's
+# safe-area inset (`omacosy-helper safe-top`). A notched display reports
+# usable space starting below the camera strip, so the bar already fits
+# in space no window can use and only the margin is left to reserve; a
+# flat panel reports nothing, so the bar's full height is reserved. The
+# question is whether the display has a notch, which is not the same set
+# as whether it is built in: every Apple Silicon laptop before the 2021
+# 14"/16" MacBook Pro is built in and has no notch. No external display
+# has a notch either, so the second entry is the same sum with nothing
+# taken off it.
+outer.top = [{ monitor.'built-in' = @OUTER_TOP@ }, @OUTER_TOP_EXT@]
 
 # Fixed-size settings windows fight the tiler (resize -> snap back ->
 # relayout flicker); float them instead.

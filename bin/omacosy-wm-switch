@@ -97,13 +97,18 @@ omniwm)
   # aerospace.toml — OmniWM's hotkeys cannot exec, so they move into
   # Karabiner rules for the duration
   "$HOME/.local/bin/omacosy-karabiner-omniwm" install 2>/dev/null || true
-  # omacosy-gesture comes BACK, demoted to the vertical gesture only:
-  # OmniWM's own swipes are horizontal-only (one axis), and swipe-up
-  # for the overview is muscle memory. Its horizontal actions are set
-  # to "" (non-next/prev strings no-op before any aerospace call), so
-  # it cannot fight OmniWM's workspace swipes. swipe_down stays "" too:
-  # OmniWM rejects ALL IPC while its overview is open, so a close
-  # gesture cannot work — Esc, click or selecting closes it.
+  # omacosy-gesture comes BACK and owns ALL FOUR directions, because
+  # OmniWM's own workspace swipe is off in settings.toml. Two engines on
+  # one four-finger gesture fought: OmniWM's fired on any horizontal
+  # component, so a diagonal swipe-up switched workspace AND opened the
+  # overview. omacosy-gesture commits a gesture to one axis and consumes
+  # horizontal flicks while the overlay is up, which is the behaviour
+  # AeroSpace already gets from the same code.
+  #
+  # So do NOT blank swipe_left/swipe_right for OmniWM, whatever an older
+  # comment here said: with OmniWM's handler off there would be no
+  # horizontal swipe left at all. swipe_down DOES stay a close command:
+  # OmniWM rejects IPC while ITS overview is open, but this is ours.
   REPO="$(cd "$(dirname "$(readlink "$HOME/.local/bin/omacosy-wm-switch" || echo "$0")")/.." && pwd)"
   cp "$REPO/config/gesture/config.omniwm.json" "$HOME/.config/omacosy/gesture.json" 2>/dev/null || true
   # see start_aerospace_world: the daemon reads gesture.json once, at startup,

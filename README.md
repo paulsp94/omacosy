@@ -75,7 +75,7 @@ grant hide themselves rather than half-work.
 |---|---|---|---|
 | **Accessibility** | AeroSpace *or* OmniWM, `omacosy-gesture`, `omacosy-bar` (reads the focused app's menus for the app-pill popup), `omacosy-ffm` (AeroSpace mode only) | Move, resize and focus other apps' windows. This is the tiling itself, and it is the broadest permission here. | Nothing tiles. Not optional in practice. |
 | **Input Monitoring** | Karabiner-Elements, `omacosy-gesture` (and OmniWM, under that option) | Karabiner reads keys to remap Caps Lock; `omacosy-gesture` reads raw trackpad contacts, because macOS 26 stopped carrying touch data in normal events. | No Super key, no swipe gestures. |
-| **Screen Recording** | `omacosy-overview` | Captures a thumbnail per window for the overview cards, including windows the window manager has stashed offscreen. A screenshot of the visible screen could not see those. | Cards fall back to app icons and titles. |
+| **Screen Recording** | `omacosy-overview`, `omacosy-bar` | Overview captures a thumbnail per window for its cards, including windows the window manager has stashed offscreen, which a screenshot of the visible screen could not see. The bar samples the native menu bar's colour once, so an auto-hiding bar can paint it on the first frame instead of resolving a blur on every reveal. | Cards fall back to app icons and titles; the bar falls back to a live blur, which reveals more slowly and matches the menu bar less exactly. |
 | **Bluetooth** | `omacosy-bar` | Reads adapter power and the paired-device list for the bluetooth pill and its menu. | The pill hides itself. |
 | **Location** | `omacosy-bar` | Reads **only** the wi-fi network's name, which macOS classes as location data. No coordinate is ever requested; the authorisation itself is what unlocks `CWInterface.ssid()`. | The wi-fi popup's title row reads "wi-fi" instead of your network's name. Everything else is unaffected. |
 | **Automation** | `omacosy-bar`, `theme-set` | Apple Events to **Spotify** (what is playing; play/pause/next from the media pill) and to **System Events** (sleep, lock and restart from the Apple menu; setting the wallpaper). | The media pill hides; those menu rows do nothing. |
@@ -144,7 +144,7 @@ Your personal shell config belongs in `~/.zshrc.local`; the repo's
 |---|---|---|
 | Tiling WM | [AeroSpace](https://github.com/nikitabobko/AeroSpace) *or* [OmniWM](https://github.com/BarutSRB/OmniWM) via `omacosy-wm-switch` | `config/aerospace/aerospace.template.toml`, `config/omniwm/settings.toml` |
 | Super key | [Karabiner](https://karabiner-elements.pqrs.org) (Caps Lock → cmd+ctrl+alt) | `config/karabiner/` (copied, not symlinked — TCC) |
-| Status bar, popups, shade | `omacosy-bar` (self-compiled launchd agent, one process draws all of it) | `helper/bar.swift` |
+| Status bar, popups, shade | `omacosy-bar` (self-compiled launchd agent, one process draws all of it) | `helper/bar.swift`, `config/bar.conf` (live copy: `~/.config/omacosy/bar.conf`) |
 | Window borders + fullscreen shroud | `omacosy-borders` (self-compiled launchd agent) | `helper/borders.swift`, `config/borders.conf` |
 | Focus follows mouse | `omacosy-ffm` (self-compiled launchd agent; parked under OmniWM, whose native ffm takes over) | `helper/ffm.swift`, `config/ffm-ignore` |
 | Trackpad gestures | `omacosy-gesture` (self-compiled launchd agent; engine absorbed from [aerospace-swipe](https://github.com/acsandmann/aerospace-swipe), MIT) | `helper/gesture/`, `config/gesture/` (live copy: `~/.config/omacosy/gesture.json`) |
@@ -209,6 +209,29 @@ stays visible in its reserved strip and never plays this game.
 If the native menu bar ever gets stuck revealed over the bar (a
 Tahoe bug, most often poked by a Focus mode's menu-bar icon),
 `killall SystemUIServer` resets it.
+
+### Whether the bar hides at rest
+
+```sh
+omacosy-bar-autohide          # what it is set to now, and what that means
+omacosy-bar-autohide auto     # let the display decide (the default)
+omacosy-bar-autohide on       # hide at rest, give the height back
+omacosy-bar-autohide off      # always visible
+```
+
+`auto` reads the display. A notched panel keeps the bar visible, because
+macOS already excludes the camera strip from the usable area and hiding the
+bar there gives back no screen. A flat panel or an external monitor hides
+the bar at rest, and windows get that height.
+
+This is a command rather than a line to edit, because the setting alone is
+not the whole change. A bar that stays visible occupies the top of the
+panel, so tiled windows have to start below it; a bar that hides gives that
+height back and the windows need only the ordinary margin. The command
+writes `autohide` in `~/.config/omacosy/bar.conf`, resizes aerospace's
+`outer.top` gap to match, and restarts the bar. Editing the file by hand
+sets the bar and not the gap, which either buries the bar under a window or
+reserves space for a bar that is not there.
 
 ### Workspace icons
 

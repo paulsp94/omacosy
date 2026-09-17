@@ -97,6 +97,24 @@ func windowCandidates() -> [Cand] {
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
         kCGNullWindowID) as? [[String: Any]] else { return [] }
     let screens = displayBounds()
+    // The ordinary windows, collected first because the overlay test below
+    // asks whether something in FRONT of them wraps one, and the list runs
+    // front to back.
+    //
+    // 200x200 so a genuinely small panel cannot be excused by happening to
+    // enclose some tiny utility window. Nothing a person tiles is that
+    // small: a four-way split of a 1440x900 display still leaves 708x438.
+    var realWindows: [(pid: pid_t, rect: CGRect)] = []
+    for w in list {
+        guard let layer = w["kCGWindowLayer"] as? Int, layer == 0,
+            let b = w["kCGWindowBounds"] as? [String: Any],
+            let x = b["X"] as? CGFloat, let y = b["Y"] as? CGFloat,
+            let wd = b["Width"] as? CGFloat, let h = b["Height"] as? CGFloat,
+            let pid = w["kCGWindowOwnerPID"] as? pid_t,
+            wd >= 200, h >= 200
+        else { continue }
+        realWindows.append((pid, CGRect(x: x, y: y, width: wd, height: h)))
+    }
     var cands: [Cand] = []
     for w in list { // list is front-to-back
         guard let layer = w["kCGWindowLayer"] as? Int,
@@ -125,6 +143,71 @@ func windowCandidates() -> [Cand] {
             && owner != "Window Server"
         guard layer == 0 || blocking else { continue }
         let rect = CGRect(x: x, y: y, width: wd, height: h)
+        // A third kind is not a panel either, and cannot be named in
+        // advance: an app-wide overlay spanning a whole display.
+        // LanguageTool for Desktop ships two, both 1440x900 at layer 3,
+        // and either one stops hover focus dead across the entire
+        // screen — the hit test meets it first wherever the pointer is
+        // and returns "leave focus alone".
+        //
+        // The panel rule protects a DISCRETE thing: a Touch ID prompt,
+        // a HUD. Something covering a display end to end is an overlay,
+        // and a rule about not tunnelling under panels cannot have
+        // meant "disable hover focus". Drop it from the candidates so
+        // it neither blocks nor is a target, and keep looking beneath.
+        //
+        // Not detectable any other way. These report kCGWindowAlpha 1.0
+        // and a normal sharing state; they are transparent where they
+        // are drawn, not at the window level, so the window server
+        // describes them exactly like a solid window.
+        //
+        // 0.95 rather than exact equality: menu-bar insets and display
+        // scaling leave a window a few points short of its display, and
+        // nothing that is genuinely a panel comes close to this.
+        //
+        // The same overlay also appears WINDOW-sized, which the display
+        // test alone does not catch. LanguageTool's third window tracks
+        // whichever window is focused, sitting on it with a margin:
+        // measured at -64,382 852x582 over a Ghostty window at 8,454
+        // 708x438, its frame inflated by 72 points on every side. Hover
+        // focus died over that window and nowhere else, which is what made
+        // it look random rather than app-wide.
+        //
+        // So the test is the shape of the thing, not its size: a window
+        // that COVERS another application's window is a decoration of it.
+        // A panel worth protecting sits over part of the screen and takes
+        // only a corner of what is under it. A full-display overlay is the
+        // same rule seen from further away, and both are kept because a
+        // display with no ordinary window on it has nothing to cover.
+        //
+        // How much is "covers" was strict containment, and that missed a
+        // third shape. Measured: LanguageTool's window at 802,-64 702x1027
+        // is anchored to Safari at 714,8 718x883 inflated by 72 points on
+        // the top, right and bottom, but starts 88 points inside its left
+        // edge. It wraps three sides of four, so containment is false, the
+        // window survives as a panel, and hover focus over that Safari
+        // window dies while the rest of the display is fine.
+        //
+        // So the test is a FRACTION of the covered window, not all of it.
+        // 0.7 separates the two cases by a wide margin: that overlay takes
+        // 630x883 of Safari, 87.7% of it, while a 1Password Touch ID
+        // prompt over a half-display tile takes about 19%. Nothing that is
+        // genuinely a discrete panel comes near it, which is the argument
+        // the 0.95 display test already makes, one level down. It also
+        // subsumes containment, the 100% case, so there is one rule here
+        // instead of two.
+        //
+        // Same-app is deliberately excluded: an app drawing a shade over
+        // its own window is doing it on purpose, and blocking is right.
+        if blocking, screens.contains(where: { scr in
+            let i = rect.intersection(scr)
+            return !i.isNull && i.width * i.height >= scr.width * scr.height * 0.95
+        }) { continue }
+        if blocking, realWindows.contains(where: {
+            guard $0.pid != pid else { return false }
+            let i = rect.intersection($0.rect)
+            return !i.isNull && i.width * i.height >= $0.rect.width * $0.rect.height * 0.7
+        }) { continue }
         // AeroSpace hides inactive-workspace windows mostly offscreen
         // with a sliver visible — ignore anything <30% on-screen
         let visible = screens.reduce(CGFloat(0)) { acc, scr in

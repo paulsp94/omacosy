@@ -244,12 +244,23 @@ if [ ! -x "$HOME/.local/bin/omacosy-borders" ] || [ "$REPO_DIR/helper/borders.sw
   log "Building omacosy-borders"
   swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight -o "$HOME/.local/bin/omacosy-borders" "$REPO_DIR/helper/borders.swift"
 fi
+
+# Cmd+H and the Dock icon, under OmniWM. Two behaviours: hiding the last
+# window of a workspace took you off it, and clicking the Dock icon of a
+# hidden app did not bring you to it. Both come from OmniWM following an
+# app activation macOS made on its own; helper/recall.swift has the
+# measurements. Under AeroSpace it stays idle until OmniWM starts.
+if [ ! -x "$HOME/.local/bin/omacosy-recall" ] || [ "$REPO_DIR/helper/recall.swift" -nt "$HOME/.local/bin/omacosy-recall" ]; then
+  log "Building omacosy-recall"
+  swiftc -O -o "$HOME/.local/bin/omacosy-recall" "$REPO_DIR/helper/recall.swift"
+fi
 # stable code identity so TCC grants survive rebuilds (skipped when no
 # signing identity is present — then re-grant after each rebuild)
 if security find-identity -p codesigning -v 2>/dev/null | grep -q "Apple Development"; then
   codesign -f -s "Apple Development" --identifier com.omacosy.helper "$HOME/.local/bin/omacosy-helper" 2>/dev/null || true
   codesign -f -s "Apple Development" --identifier com.omacosy.ffm "$HOME/.local/bin/omacosy-ffm" 2>/dev/null || true
   codesign -f -s "Apple Development" --identifier com.omacosy.borders "$HOME/.local/bin/omacosy-borders" 2>/dev/null || true
+  codesign -f -s "Apple Development" --identifier com.omacosy.recall "$HOME/.local/bin/omacosy-recall" 2>/dev/null || true
   # the BUNDLE is signed now; the identifier is what grants key on
   codesign -f -s "Apple Development" --identifier com.omacosy.bar "$BAR_APP" 2>/dev/null || true
   codesign -f -s "Apple Development" --identifier com.omacosy.overview "$HOME/.local/bin/omacosy-overview" 2>/dev/null || true
@@ -290,6 +301,23 @@ cat > "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" <<PLIST
 PLIST
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" 2>/dev/null || true
 launchctl load "$HOME/Library/LaunchAgents/com.omacosy.borders.plist"
+
+# resident under both managers; restart-on-failure brings back a crash.
+cat > "$HOME/Library/LaunchAgents/com.omacosy.recall.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.omacosy.recall</string>
+  <key>ProgramArguments</key><array><string>$HOME/.local/bin/omacosy-recall</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardErrorPath</key><string>/tmp/omacosy-recall.err</string>
+</dict>
+</plist>
+PLIST
+launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.recall.plist" 2>/dev/null || true
+launchctl load "$HOME/Library/LaunchAgents/com.omacosy.recall.plist"
 
 cat > "$HOME/Library/LaunchAgents/com.omacosy.ffm.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

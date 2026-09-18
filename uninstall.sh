@@ -24,6 +24,8 @@ pkill -f OmniWM.app 2>/dev/null || true
 osascript -e 'quit app "Karabiner-Elements"' 2>/dev/null || true
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" "$HOME/.local/bin/omacosy-borders"
+launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.recall.plist" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/com.omacosy.recall.plist" "$HOME/.local/bin/omacosy-recall"
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.ffm.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.ffm.plist" "$HOME/.local/bin/omacosy-ffm"
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.dwindle.plist" 2>/dev/null || true

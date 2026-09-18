@@ -524,11 +524,48 @@ func refreshThumbs(_ ids: [UInt32]) {
     }
 }
 
+// the wallpaper theme-set and theme-bg-next last applied — the system's
+// recorded desktop-picture path goes stale when theme repos move
+let wallpaperLink = "\(stateDir)/background"
+func wallpaperURL(for screen: NSScreen) -> URL? {
+    let link = URL(fileURLWithPath: wallpaperLink).resolvingSymlinksInPath()
+    if FileManager.default.fileExists(atPath: link.path) { return link }
+    let bgDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/omarchy/current/theme/backgrounds")
+    let themeWall = (try? FileManager.default.contentsOfDirectory(
+        at: bgDir, includingPropertiesForKeys: nil))?
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }.first
+    return themeWall ?? NSWorkspace.shared.desktopImageURL(for: screen)
+}
+
+// .attrib catches a symlink swap that .write alone misses, and a
+// delete/rename re-arms instead of going deaf for the daemon's life
+func watch(_ path: String, handler: @escaping () -> Void) {
+    let fd = open(path, O_EVTONLY)
+    guard fd >= 0 else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { watch(path, handler: handler) }
+        return
+    }
+    let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
+        eventMask: [.write, .attrib, .delete, .rename], queue: .main)
+    src.setEventHandler {
+        let ev = src.data
+        handler()
+        if ev.contains(.delete) || ev.contains(.rename) { src.cancel() }
+    }
+    src.setCancelHandler {
+        close(fd)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { watch(path, handler: handler) }
+    }
+    src.resume()
+}
+
 // --- UI ------------------------------------------------------------------
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-let accent = themeAccent()
+// re-read on every show: the daemon outlives any number of theme changes
+var accent = themeAccent()
 
 // A NON-ACTIVATING panel (the Spotlight/Raycast recipe): it becomes
 // key — keyboard + clicks work instantly — WITHOUT activating our
@@ -1226,6 +1263,7 @@ func buildOverlay(_ snap: (order: [String], wins: [String: [Win]], focused: Stri
 func showOverlay() {
     guard !overlayVisible else { return }
     overlayVisible = true
+    accent = themeAccent()
     // the backdrop orders front IMMEDIATELY — everything data-driven
     // (aerospace query, icons, thumbnails) fills in asynchronously, so
     // the swipe response is the window server's latency, nothing else
@@ -1246,14 +1284,7 @@ func showOverlay() {
     placeholder.wallLayer.opacity = 0
     placeholder.wallLayer.setAffineTransform(CGAffineTransform(scaleX: 1.05, y: 1.05))
     placeholder.layer?.addSublayer(placeholder.wallLayer)
-    // resolve the wallpaper the way theme-set sets it — the system's
-    // recorded desktop-picture path goes stale when theme repos move
-    let bgDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/omarchy/current/theme/backgrounds")
-    let themeWall = (try? FileManager.default.contentsOfDirectory(
-        at: bgDir, includingPropertiesForKeys: nil))?
-        .sorted { $0.lastPathComponent < $1.lastPathComponent }.first
-    if let url = themeWall ?? NSWorkspace.shared.desktopImageURL(for: screen) {
+    if let url = wallpaperURL(for: screen) {
         DispatchQueue.global().async {
             let cg = NSImage(contentsOf: url)?
                 .cgImage(forProposedRect: nil, context: nil, hints: nil)
@@ -1301,6 +1332,34 @@ func showOverlay() {
 }
 
 var lastShowAt = Date.distantPast
+
+// a theme switch while the overview is open: theme-set swaps the symlink
+// inside this directory, so the cards are redrawn in the new colour
+watch(FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".config/omarchy/current").path) {
+    accent = themeAccent()
+    rebuildCards()
+}
+
+// a wallpaper switch while the overview is open. Every write in the state
+// dir wakes this, this daemon's own pidfile included, so only a new
+// target reloads the picture.
+var shownWallpaper = URL(fileURLWithPath: wallpaperLink).resolvingSymlinksInPath().path
+watch(stateDir) {
+    let now = URL(fileURLWithPath: wallpaperLink).resolvingSymlinksInPath().path
+    guard now != shownWallpaper else { return }
+    shownWallpaper = now
+    guard overlayVisible, let c = win.contentView as? ContentView else { return }
+    DispatchQueue.global().async {
+        let cg = NSImage(contentsOf: URL(fileURLWithPath: now))?
+            .cgImage(forProposedRect: nil, context: nil, hints: nil)
+        DispatchQueue.main.async {
+            guard overlayVisible, win.contentView === c, let cg else { return }
+            c.wallLayer.contents = cg
+        }
+    }
+}
+
 let usr1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
 usr1.setEventHandler {
     tlog("SIGUSR1 visible=\(overlayVisible)")

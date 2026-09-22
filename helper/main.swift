@@ -383,7 +383,19 @@ case "split-hint":
             let w = b["Width"], let h = b["Height"] else { return nil }
         return (x, y, w, h)
     }
-    let splitWidthMultiplier: CGFloat = 1.4
+    // Hyprland's `dwindle:split_width_multiplier` defaults to 1.0.
+    // 1.4 is tuned for a 3440-wide display, where the half-slot
+    // (1712x1389) is still wider than tall and would go side-by-side
+    // twice before it ever stacked. On a narrow display it instead
+    // stacks slots that are wider than tall: a 500x441 slot is
+    // side-by-side at 1.0 (500 >= 441) and stacked at 1.4
+    // (500 < 617.4), which reads as a split direction that changes at
+    // random. So keep 1.4 where it was meant to apply and fall back to
+    // Hyprland's default below that. The threshold is a judgement
+    // call rather than a measured boundary.
+    let wideDisplayWidth: CGFloat = 2560
+    let splitWidthMultiplier: CGFloat =
+        CGDisplayBounds(CGMainDisplayID()).width >= wideDisplayWidth ? 1.4 : 1.0
     let statePath = "/tmp/omacosy-split-state-\(getuid())"
     let now = Date().timeIntervalSince1970
     var state: (wid: UInt32, w: CGFloat, h: CGFloat)?
@@ -425,13 +437,8 @@ case "split-hint":
         (w, h) = (f.2, f.3)
         how = moved ? "settled" : "static"
     }
-    // Direction: Hyprland's rule is `stack when h * multiplier > w`
-    // (dwindle:split_width_multiplier, default 1.0). At 1.0 an
-    // ultrawide's half-slot (1712x1389) is still wider than tall, so
-    // the spiral goes side-by-side twice before it ever stacks. 1.4
-    // makes that half-slot stack first, which restores the 16:9
-    // left/down/left cadence on a 3440-wide display without changing
-    // behavior on displays where the half is already taller than wide.
+    // Direction: Hyprland's rule is `stack when h * multiplier > w`.
+    // Which multiplier applies on this display is decided above.
     let dir = w >= h * splitWidthMultiplier ? "horizontal" : "vertical"
     let aerospaceBin = ["/opt/homebrew/bin/aerospace", "/usr/local/bin/aerospace"]
         .first { FileManager.default.isExecutableFile(atPath: $0) } ?? "aerospace"

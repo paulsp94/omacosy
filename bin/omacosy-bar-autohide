@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# omacosy-bar-autohide [on|off|auto|status] — whether this bar hides at rest,
+# and the top gap that has to go with it. No args = status.
+#
+# The setting alone is not enough. A bar that stays visible occupies the top
+# of the panel, so tiled windows have to start below it; a bar that hides
+# gives that height back and the windows only need the ordinary margin.
+# Changing one without the other either buries the bar under a window or
+# wastes its height on a bar that is not there.
+#
+#   hiding at rest    outer.top = margin
+#   visible at rest   outer.top = bar height + margin - notch inset
+#
+# Both numbers are asked for, not assumed: the bar's height comes from macOS
+# and the inset from the display. A notched panel already excludes the camera
+# strip from the usable area, so the bar sits in space no window could take
+# and only the margin is left to reserve.
+set -uo pipefail
+
+CONF="$HOME/.config/omacosy/bar.conf"
+AERO="$HOME/.config/aerospace/aerospace.toml"
+HELPER="$HOME/.local/bin/omacosy-helper"
+MARGIN=8                                   # matches the other three edges
+A="$(command -v aerospace || echo /opt/homebrew/bin/aerospace)"
+
+num() { case "$1" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
+bar_height() { num "$("$HELPER" bar-height 2>/dev/null || true)" 34; }
+notch_inset() { num "$("$HELPER" safe-top 2>/dev/null || true)" 0; }
+
+setting() {
+  [ -f "$CONF" ] || { echo auto; return; }
+  local v
+  v=$(grep -E '^autohide *=' "$CONF" | tail -1 | cut -d= -f2 | tr -d ' ')
+  case "$v" in on|off|auto) echo "$v" ;; *) echo auto ;; esac
+}
+
+# auto reads the display: a notched panel keeps the bar, a flat one hides it.
+hides() {
+  case "$1" in
+    on) return 0 ;;
+    off) return 1 ;;
+    *) [ "$(notch_inset)" -eq 0 ] ;;
+  esac
+}
+
+# The gap is per DISPLAY, because the bar decides per display: its own
+# `autohide` is `barConf.autohide ?? !notched`, resolved against that screen's
+# safeAreaInsets.top. An external monitor is never notched, so `auto` hides
+# the bar there and keeps it on a notched built-in. One number for both would
+# be wrong on whichever display it was not computed for.
+#
+# inset is the built-in's, and only the built-in can have one.
+gap_for() {          # gap_for <hides:0|1> <inset>
+  local hidden="$1" inset="$2" g
+  [ "$hidden" -eq 0 ] && { echo "$MARGIN"; return; }
+  g=$(( $(bar_height) + MARGIN - inset ))
+  [ "$g" -lt "$MARGIN" ] && g=$MARGIN
+  echo "$g"
+}
+
+builtin_gap() {
+  local want="$1" inset; inset=$(notch_inset)
+  case "$want" in
+    on)  gap_for 0 "$inset" ;;
+    off) gap_for 1 "$inset" ;;
+    *)   if [ "$inset" -gt 0 ]; then gap_for 1 "$inset"; else gap_for 0 "$inset"; fi ;;
+  esac
+}
+
+# No external display has a notch, so auto hides the bar there.
+external_gap() {
+  case "$1" in
+    off) gap_for 1 0 ;;
+    *)   gap_for 0 0 ;;
+  esac
+}
+
+# what this machine's own display will use, for status
+want_gap() { builtin_gap "$1"; }
+
+# What aerospace has for THIS display. The line is normally the per-monitor
+# form, `[{ monitor.'built-in' = N }, M]`, so a plain cut on the first `=`
+# returns the monitor expression rather than a number. Take the built-in
+# entry when it is there, and the bare value when it is not.
+current_gap() {
+  local line
+  line=$(grep -E "^outer\\.top" "$AERO" 2>/dev/null | head -1)
+  case "$line" in
+    *built-in*) echo "$line" | sed -E "s|.*built-in'? *= *([0-9]+).*|\1|" ;;
+    *)          echo "$line" | sed -E 's|.*= *([0-9]+).*|\1|' ;;
+  esac
+}
+
+apply() {
+  local want="$1" gap
+  mkdir -p "$(dirname "$CONF")"
+  if [ -f "$CONF" ] && grep -qE '^autohide *=' "$CONF"; then
+    sed -i '' -E "s|^autohide *=.*|autohide=$want|" "$CONF"
+  else
+    printf 'autohide=%s\n' "$want" >>"$CONF"
+  fi
+  # Written in aerospace's per-monitor form, always. Replacing it with a bare
+  # number would give an external monitor the built-in's gap, which is the
+  # built-in's NOTCH allowance on a display that has none.
+  local bi ex line
+  bi=$(builtin_gap "$want"); ex=$(external_gap "$want")
+  line="outer.top = [{ monitor.'built-in' = $bi }, $ex]"
+  gap="$bi"
+  if [ -f "$AERO" ] && ! grep -qxF "$line" "$AERO"; then
+    sed -i '' -E "s|^outer\.top = .*|$line|" "$AERO"
+    "$A" reload-config >/dev/null 2>&1
+  fi
+  # The native bar's auto-hide is deliberately NOT touched here.
+  #
+  # It looked like the missing half: `off` left this bar visible while the
+  # native one still hid, so "both bars visible" seemed one `defaults write`
+  # away. Clearing _HIHideMenuBar does make the native bar visible — and it
+  # then covers this one completely. Measured on the same strip: with the
+  # native bar hidden, 0.73% of sampled pixels are saturated, which is this
+  # bar's coloured pills; with it visible, 0.00%, because what you are
+  # looking at is macOS's monochrome menu bar.
+  #
+  # This bar's window sits at layer -20, below normal windows, so a
+  # fullscreen window can cover it. The native menu bar is drawn by the
+  # window server above everything. Both visible means only one is seen, and
+  # it is not this one.
+  #
+  # So the two bars share the top edge by TAKING TURNS, which is what the
+  # split is for: this bar at rest, the native one revealed by a hover on the
+  # other half. Unhiding it permanently would have to come with raising this
+  # bar's window level, which is a different change with its own cost.
+
+  # the bar reads bar.conf once, at startup
+  launchctl kickstart -k "gui/$(id -u)/com.omacosy.bar" >/dev/null 2>&1
+  # and so does omacosy-solo, which asks the same file whether to fullscreen
+  # with or without the outer gaps. Without this it keeps using the setting
+  # from whenever it last started: switch the bar to always-visible and solo
+  # windows go on covering it edge to edge, so the bar hides under them and
+  # the change looks like it did nothing.
+  launchctl kickstart -k "gui/$(id -u)/com.omacosy.solo" >/dev/null 2>&1
+  printf 'omacosy: bar autohide=%s — built-in gap %s, external %s (%s at rest here)\n' \
+    "$want" "$bi" "$ex" "$(hides "$want" && echo hidden || echo visible)"
+}
+
+case "${1:-status}" in
+  on|off|auto) apply "$1" ;;
+  status)
+    s=$(setting)
+    printf 'autohide=%s — %s at rest on this display\n' "$s" \
+      "$(hides "$s" && echo hidden || echo visible)"
+    printf '  native menu bar: %s\n' \
+      "$([ "$(defaults read NSGlobalDomain _HIHideMenuBar 2>/dev/null)" = 1 ] && echo auto-hidden || echo visible)"
+    printf '  menu bar height %s, notch inset %s, top gap wants %s, aerospace has %s\n' \
+      "$(bar_height)" "$(notch_inset)" "$(want_gap "$s")" \
+      "$(current_gap)"
+    ;;
+  *) echo "usage: omacosy-bar-autohide [on|off|auto|status]" >&2; exit 1 ;;
+esac

@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# omacosy-solo-fullscreen [on|off|toggle|sync] — a workspace holding ONE
+# tiled window shows it the way Super+F does: the whole display, no gaps,
+# the bar tucked away (the top edge brings it back), no ring. A second
+# window drops back to normal tiling. Opt-in (issue #16): the marker file
+# below is the entire setting. No args = toggle.
+#
+# `sync` is what aerospace.toml's on-focus-changed hook runs. The hook
+# tests the marker itself and `exec`s this, so opting out costs the shell
+# AeroSpace spawns for the hook anyway and not one process more.
+#
+# The rule acts on TRANSITIONS, never on the level. Forcing fullscreen on
+# every focus change fights Super+F both ways: leave fullscreen on a lone
+# window and the next hover forces it back; enter it on a busy workspace
+# and the count forces it out. So each workspace remembers the window it
+# last saw alone, and only a change acts:
+#   - a window becomes the only tiled one -> fullscreen on. It counts as
+#     ours only when the call changed something (--fail-if-noop), so a
+#     window fullscreened by hand is never taken over.
+#   - a second tiled window arrives -> windows WE fullscreened go back.
+#     AeroSpace mostly does this itself (focusing another tiling window
+#     exits fullscreen); this covers a window that arrives unfocused.
+# Whatever Super+F does in between stands until the count moves again.
+#
+# WHAT COUNTS AS A TILE is an allowlist, not "everything but floating".
+# `%{window-layout}` has more values than the man page implies: the
+# 0.21.3-Beta binary also emits macos_native_fullscreen,
+# macos_native_minimized, macos_native_window_of_hidden_app and
+# NULL-WINDOW-LAYOUT. Counting a hidden app's window as a tile kept a
+# lone window tiled forever AND stripped a fullscreen this rule had made
+# when such a window appeared. Only *_tiles and *_accordion are tiles.
+#
+# OmniWM needs none of this: dwindle's singleWindowFit = "fill" already
+# gives a lone window the frame its own Super+F uses, on every workspace.
+set -uo pipefail
+# Homebrew APPENDED, not prepended: a launchd agent's environment does not
+# guarantee it (CONTRIBUTING), but prepending would also override an
+# aerospace the caller put ahead of it on purpose. The lookup below falls
+# back to the Homebrew path anyway, so this only rescues the other tools.
+export PATH="$PATH:/opt/homebrew/bin"
+
+MARK="$HOME/.config/omacosy/solo-fullscreen"
+mode="${1:-toggle}"
+[ "$mode" = sync ] && [ ! -e "$MARK" ] && exit 0
+
+STATE="/tmp/omacosy-solo-$(id -u)"
+AUTO="$STATE/auto" # ids this rule fullscreened, one per line
+A="$(command -v aerospace || echo /opt/homebrew/bin/aerospace)"
+
+# a live OmniWM answers its socket in ~3 ms (same probe as omacosy-ws)
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
+
+drop() { # take one id out of the ours-list
+  grep -vx "$1" "$AUTO" >"$AUTO.$$" 2>/dev/null
+  mv -f "$AUTO.$$" "$AUTO"
+}
+
+apply() {
+  [ -e "$MARK" ] || return 0
+  mkdir -p "$STATE"
+  # ONE call, and for EVERY workspace rather than the visible ones: a
+  # window thrown to a hidden workspace leaves a lone window behind on
+  # this one, the hidden side should already be right when you arrive,
+  # and the same answer says which recorded windows still exist and
+  # which are already fullscreen.
+  listing="$("$A" list-windows --all \
+    --format '%{workspace}|%{window-id}|%{window-layout}|%{window-is-fullscreen}' 2>/dev/null)" || return 0
+  tiled="$(printf '%s\n' "$listing" |
+    awk -F'|' 'NF >= 4 && $3 ~ /_(tiles|accordion)$/ { print $1 "|" $2 "|" $4 }')"
+
+  # a closed window cannot be handed back, and AeroSpace reissues window
+  # ids — an id kept after its window died could hand back a stranger's
+  # fullscreen on `off`
+  if [ -s "$AUTO" ]; then
+    printf '%s\n' "$listing" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u >"$STATE/live.$$"
+    sort -u "$AUTO" | comm -12 - "$STATE/live.$$" >"$AUTO.$$"
+    mv -f "$AUTO.$$" "$AUTO"
+    rm -f "$STATE/live.$$"
+  fi
+
+  # A record means "this workspace's lone window has been dealt with",
+  # which is what lets Super+F out of it stand. It stops meaning anything
+  # the moment that window is no longer the only tile there — including
+  # when the workspace EMPTIES, which produces no count line below, so
+  # the record used to survive and block the window's return.
+  for rec in "$STATE"/ws-*; do
+    [ -e "$rec" ] || continue
+    ws="${rec##*/ws-}"
+    here="$(printf '%s\n' "$tiled" | awk -F'|' -v w="$ws" '$1 == w { print $2 }')"
+    if [ "$(printf '%s\n' "$here" | grep -c .)" != 1 ] || [ "$here" != "$(cat "$rec" 2>/dev/null)" ]; then
+      rm -f "$rec"
+    fi
+  done
+
+  printf '%s\n' "$tiled" | awk -F'|' 'NF == 3 { n[$1]++ } END { for (w in n) print n[w], w }' |
+    while read -r n ws; do
+      rec="$STATE/ws-$ws"
+      if [ "$n" -eq 1 ]; then
+        entry="$(printf '%s\n' "$tiled" | awk -F'|' -v w="$ws" '$1 == w { print $2 "|" $3 }')"
+        id="${entry%|*}"
+        [ "$(cat "$rec" 2>/dev/null)" = "$id" ] && continue
+        if [ "${entry#*|}" = true ]; then
+          # fullscreen already, and not by us: a deliberate Super+F.
+          # Remember it so we leave it alone, never claim it.
+          printf '%s\n' "$id" >"$rec"
+          continue
+        fi
+        # The record is written only once the window IS fullscreen. A
+        # refused call — AeroSpace busy mid-relayout — has to be retried
+        # by the next hook rather than remembered as done, which is what
+        # recording first did: one transient failure left that window
+        # tiled until the count crossed again.
+        if "$A" fullscreen on --window-id "$id" --no-outer-gaps --fail-if-noop >/dev/null 2>&1; then
+          printf '%s\n' "$id" >"$rec"
+          printf '%s\n' "$id" >>"$AUTO"
+        fi
+      else
+        rm -f "$rec"
+        printf '%s\n' "$tiled" | awk -F'|' -v w="$ws" '$1 == w { print $2 }' |
+          while read -r id; do
+            grep -qx "$id" "$AUTO" 2>/dev/null || continue
+            "$A" fullscreen off --window-id "$id" >/dev/null 2>&1
+            drop "$id"
+          done
+      fi
+    done
+}
+
+case "$mode" in
+sync)
+  mkdir -p "$STATE"
+  printf '%s\n' "$$" >"$STATE/gen"
+  apply
+  # AeroSpace's window list can trail the focus event that fired the hook
+  # (a closing window is still listed, the first window on an empty
+  # workspace is not yet), so look once more after it settles. Only the
+  # newest run looks: one close fires several focus changes, and a lock
+  # would let the first run's lock swallow the retry that mattered.
+  sleep 0.5
+  [ "$(cat "$STATE/gen" 2>/dev/null)" = "$$" ] && apply
+  ;;
+on)
+  mkdir -p "$(dirname "$MARK")" && : >"$MARK"
+  if wm_is_omniwm; then
+    echo "omacosy: solo fullscreen on — OmniWM already fills a lone window; this takes effect under AeroSpace"
+  else
+    apply
+    echo "omacosy: a lone window now goes fullscreen. Undo: omacosy-solo-fullscreen off"
+  fi
+  ;;
+off)
+  rm -f "$MARK"
+  # hand back only what this rule took; fullscreens made by hand stay
+  if [ -f "$AUTO" ] && ! wm_is_omniwm; then
+    while read -r id; do
+      [ -n "$id" ] && "$A" fullscreen off --window-id "$id" >/dev/null 2>&1
+    done <"$AUTO"
+  fi
+  rm -rf "$STATE"
+  echo "omacosy: solo fullscreen off"
+  ;;
+toggle)
+  if [ -e "$MARK" ]; then exec "$0" off; else exec "$0" on; fi
+  ;;
+*)
+  echo "usage: omacosy-solo-fullscreen [on|off|toggle|sync]" >&2
+  exit 1
+  ;;
+esac

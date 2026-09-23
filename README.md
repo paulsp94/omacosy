@@ -451,6 +451,32 @@ off. Instead the bar grows a pill whenever the focused workspace holds
 floats, and **Super+S** or a click on that pill surfaces the next one
 and brings the cursor with it.
 
+### One window, whole display
+
+Opt-in, off by default: `omacosy-solo-fullscreen on`. A workspace
+holding a single tiled window then shows it the way `Super+F` does: the
+whole display, no gaps, no ring, and the bar tucked away until the
+pointer touches the top edge (on a notched display the camera strip is
+blacked out, as with `Super+F`). A second window drops back to normal
+tiling, and closing down to one goes full again.
+`omacosy-solo-fullscreen off` hands back every window it took.
+
+It acts when a workspace's lone window changes, never on every focus
+change, so `Super+F` keeps its meaning: leave fullscreen on a lone
+window and it stays tiled until the workspace gains and loses a window
+again; fullscreen a window by hand on a busy workspace and it is never
+taken back, and `off` hands back only what the rule itself took.
+
+Only real tiles count. Floats do not, and neither do the windows macOS
+hands back for a hidden app, a minimised window or one in native
+fullscreen — counting those kept a lone window tiled forever. Every
+workspace is judged, not just the ones on screen, so a workspace is
+already right when you switch to it.
+
+Under OmniWM there is nothing to switch: its dwindle layout already
+gives a lone window the frame its own `Super+F` uses
+(`singleWindowFit = "fill"`), which keeps the bar's strip.
+
 ## Two window managers (OmniWM option, beta)
 
 AeroSpace is the default. [OmniWM](https://github.com/BarutSRB/OmniWM)

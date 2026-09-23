@@ -4,6 +4,12 @@
 //   cursor set <x> <y>      warp it there (no synthetic movement, so
 //                           focus-follows-mouse cannot react)
 //   displays                per display (arrangement order): "index<TAB>notched"
+//   bar-height              the height macOS draws the menu bar at, in
+//                           points; install.sh reserves room for the bar
+//                           from it
+//   safe-top                the built-in display's notch inset in points
+//                           (0 = no notch); install.sh sizes the top gap
+//                           from it
 //   wallpaper <path>        set the desktop picture on every screen
 //   wallpaper resync        put the recorded picture back on any screen
 //                           that shows an older omacosy picture
@@ -152,6 +158,36 @@ case "displays":
         let notched = scr.safeAreaInsets.top > 0 ? 1 : 0
         print("\(i + 1)\t\(notched)")
     }
+
+case "bar-height":
+    // How tall macOS draws the menu bar, in points. install.sh reserves room
+    // for the bar with it. Asked rather than assumed, for the same reason
+    // safe-top is read from the screen: a number matched against a guess goes
+    // stale on hardware that does not exist yet. Measured here macOS says 30,
+    // so a hardcoded 34 over-reserved by four points, and a hardcoded number
+    // is wrong in whichever direction Apple next moves it.
+    //
+    // macOS will not tell a process how tall the menu bar is unless it has a
+    // menu of its own, and a command-line tool has none. An empty NSMenu is
+    // enough to be told, and it draws nothing: this prints and exits.
+    if NSApplication.shared.mainMenu == nil { NSApplication.shared.mainMenu = NSMenu() }
+    guard let h = NSApplication.shared.mainMenu?.menuBarHeight, h > 0 else { exit(1) }
+    print(Int(h.rounded()))
+
+case "safe-top":
+    // A notched display reports usable space starting below the camera
+    // strip, so anything measured from there is already clear of it and
+    // needs a smaller gap than a flat panel. Print the offset macOS
+    // reports for the built-in display, in points, 0 where there is no
+    // notch; install.sh turns it into aerospace's outer.top. Read from
+    // the screen rather than matched against a table of models, which
+    // would go stale on hardware that does not exist yet.
+    let builtin = builtinDisplayID()
+    let panel = NSScreen.screens.first {
+        ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+            .uint32Value == builtin
+    }
+    print(Int(panel?.safeAreaInsets.top ?? 0))
 
 case "wallpaper":
     guard args.count > 2 else {

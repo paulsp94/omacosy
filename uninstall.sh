@@ -74,6 +74,7 @@ rm -rf "/tmp/omacosy-spawn-$(id -u).lock.d"
 rm -f "$HOME/.config/omacosy/ffm-ignore" \
   "$HOME/.config/omacosy/borders.conf" \
   "$HOME/.config/omacosy/apps.conf" \
+  "$HOME/.config/omacosy/weather.json" \
   "$HOME/.config/omacosy/gesture.json" \
   "$HOME/.config/omacosy/disabled"
 rmdir "$HOME/.config/omacosy" 2>/dev/null || true
@@ -173,7 +174,7 @@ fi
 
 # theme-set / theme-next out of ~/.local/bin — only when they are OUR
 # symlinks (a user's own script of the same name survives)
-for t in theme-set theme-next theme-bg-next omacosy-ws omacosy-toggle omacosy-focus-guard omacosy-ws-collapse omacosy-float omacosy-cycle omacosy-update omacosy-spawn omacosy-layout omacosy-wm-switch omacosy-karabiner-omniwm; do
+for t in theme-set theme-next theme-bg-next omacosy-ws omacosy-toggle omacosy-focus-guard omacosy-ws-collapse omacosy-float omacosy-cycle omacosy-update omacosy-weather omacosy-spawn omacosy-layout omacosy-wm-switch omacosy-karabiner-omniwm; do
   target="$(readlink "$HOME/.local/bin/$t" 2>/dev/null || true)"
   case "$target" in *omacosy*) rm -f "$HOME/.local/bin/$t" ;; esac
 done

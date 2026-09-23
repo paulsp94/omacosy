@@ -1087,6 +1087,7 @@ let bluetoothWatcher = BluetoothWatcher()
 struct Weather {
     var emoji = ""
     var temp = ""
+    var tempUnit = "°C"
     var desc = ""
     var feels = ""
     var low = ""
@@ -1101,6 +1102,31 @@ struct Weather {
 }
 
 var weather: Weather?
+
+struct WeatherPreferences {
+    var fahrenheit = false
+    var location = ""
+}
+
+func loadWeatherPreferences() -> WeatherPreferences {
+    let file = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/omacosy/weather.json")
+    guard let data = try? Data(contentsOf: file),
+          let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return WeatherPreferences() }
+
+    var preferences = WeatherPreferences()
+    if (config["unit"] as? String)?.lowercased() == "fahrenheit" {
+        preferences.fahrenheit = true
+    }
+    if let location = config["location"] as? String {
+        let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed.lowercased() != "auto" {
+            preferences.location = trimmed
+        }
+    }
+    return preferences
+}
 
 // WWO condition code -> glyph, night-aware for the clear/partly pair
 func weatherEmoji(_ code: Int, night: Bool) -> String {
@@ -1132,7 +1158,13 @@ func moonEmoji(_ phase: String) -> String {
 }
 
 func updateWeather() {
-    guard let url = URL(string: "https://wttr.in/?format=j1") else { return }
+    let preferences = loadWeatherPreferences()
+    var components = URLComponents()
+    components.scheme = "https"
+    components.host = "wttr.in"
+    components.path = "/" + preferences.location
+    components.queryItems = [URLQueryItem(name: "format", value: "j1")]
+    guard let url = components.url else { return }
     var request = URLRequest(url: url)
     request.timeoutInterval = 15
     URLSession.shared.dataTask(with: request) { data, _, _ in
@@ -1148,25 +1180,30 @@ func updateWeather() {
         }
 
         var w = Weather()
+        let fahrenheit = preferences.fahrenheit
         let hour = Calendar.current.component(.hour, from: Date())
         w.emoji = weatherEmoji(Int(text(current, "weatherCode")) ?? 0, night: hour < 7 || hour >= 20)
-        w.temp = text(current, "temp_C")
+        w.temp = text(current, fahrenheit ? "temp_F" : "temp_C")
+        w.tempUnit = fahrenheit ? "°F" : "°C"
         w.desc = nested(current, "weatherDesc").lowercased()
-        w.feels = text(current, "FeelsLikeC")
-        w.low = text(today, "mintempC")
-        w.high = text(today, "maxtempC")
+        w.feels = text(current, fahrenheit ? "FeelsLikeF" : "FeelsLikeC")
+        w.low = text(today, fahrenheit ? "mintempF" : "mintempC")
+        w.high = text(today, fahrenheit ? "maxtempF" : "maxtempC")
         w.humidity = text(current, "humidity")
 
         let degrees = Int(text(current, "winddirDegree")) ?? 0
         let arrows = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"]
-        w.wind = "\(arrows[((degrees + 180) / 45) % 8]) \(text(current, "windspeedKmph")) km/h"
+        let wind = text(current, fahrenheit ? "windspeedMiles" : "windspeedKmph")
+        w.wind = "\(arrows[((degrees + 180) / 45) % 8]) \(wind) \(fahrenheit ? "mph" : "km/h")"
 
         // rain earns a row only with real signal: falling now, or likely today
-        let precip = Double(text(current, "precipMM")) ?? 0
+        let precipitation = text(current, fahrenheit ? "precipInches" : "precipMM")
+        let precip = Double(precipitation) ?? 0
+        let precipUnit = fahrenheit ? "in" : "mm"
         let chance = ((today["hourly"] as? [[String: Any]]) ?? [])
             .compactMap { Int(($0["chanceofrain"] as? String) ?? "0") }.max() ?? 0
         if precip > 0 {
-            w.rain = "☔ \(text(current, "precipMM"))mm now"
+            w.rain = "☔ \(precipitation)\(precipUnit) now"
             if chance >= 30 { w.rain += " · rain \(chance)% today" }
         } else if chance >= 30 {
             w.rain = "☔ rain \(chance)% today"
@@ -1196,7 +1233,7 @@ func updateWeather() {
 
         DispatchQueue.main.async {
             weather = w
-            set("weather") { $0.icon = ""; $0.label = "\(w.emoji) \(w.temp)°C" }
+            set("weather") { $0.icon = ""; $0.label = "\(w.emoji) \(w.temp)\(w.tempUnit)" }
             if openPopup == "weather" { refreshPopup() }
         }
     }.resume()
@@ -1668,11 +1705,11 @@ func bluetoothRows() -> [PopupRow] {
 
 func weatherRows() -> [PopupRow] {
     guard let w = weather else { return [] }
-    var rows: [PopupRow] = [PopupRow(text: "\(w.emoji) \(w.temp)°C \(w.desc)", hero: true)]
+    var rows: [PopupRow] = [PopupRow(text: "\(w.emoji) \(w.temp)\(w.tempUnit) \(w.desc)", hero: true)]
 
     // feels-like earns a mention only when it differs from the real temp
-    var today = "today \(w.low)° → \(w.high)°C"
-    if w.feels != w.temp { today = "feels \(w.feels)°C · " + today }
+    var today = "today \(w.low)° → \(w.high)\(w.tempUnit)"
+    if w.feels != w.temp { today = "feels \(w.feels)\(w.tempUnit) · " + today }
     rows.append(PopupRow(text: today))
     rows.append(PopupRow(text: "wind \(w.wind) · humidity \(w.humidity)%"))
     if !w.rain.isEmpty { rows.append(PopupRow(text: w.rain)) }

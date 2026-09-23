@@ -1,0 +1,74 @@
+#!/bin/bash
+# omacosy-weather — choose weather units and a fixed location without
+# coupling the bar to a VPN exit node. Settings are read at bar startup and
+# every scheduled refresh; restarting the bar makes a command take effect now.
+set -euo pipefail
+
+CONFIG_DIR="$HOME/.config/omacosy"
+CONFIG="$CONFIG_DIR/weather.json"
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  omacosy-weather status
+  omacosy-weather unit celsius|fahrenheit
+  omacosy-weather location auto|ZIP|city
+EOF
+  exit 2
+}
+
+read_setting() {
+  local key=$1 fallback=$2 value
+  value="$(plutil -extract "$key" raw -o - "$CONFIG" 2>/dev/null || true)"
+  if [ -n "$value" ]; then printf '%s\n' "$value"; else printf '%s\n' "$fallback"; fi
+}
+
+write_setting() {
+  local key=$1 value=$2 tmp
+  mkdir -p "$CONFIG_DIR"
+  tmp="$(mktemp "$CONFIG_DIR/weather.json.XXXXXX")"
+  trap 'if [ -n "${tmp:-}" ]; then rm -f "$tmp"; fi' EXIT
+  if ! plutil -convert json -o "$tmp" "$CONFIG" 2>/dev/null; then
+    printf '{"unit":"celsius","location":"auto"}\n' >"$tmp"
+  fi
+  if plutil -extract "$key" raw -o - "$tmp" >/dev/null 2>&1; then
+    plutil -replace "$key" -string "$value" "$tmp"
+  else
+    plutil -insert "$key" -string "$value" "$tmp"
+  fi
+  mv "$tmp" "$CONFIG"
+  trap - EXIT
+}
+
+restart_bar() {
+  local service="gui/$(id -u)/com.omacosy.bar"
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl kickstart -k "$service" ||
+      echo "weather saved; restart the bar to apply it" >&2
+  fi
+}
+
+case "${1:-status}" in
+  status)
+    [ "$#" -le 1 ] || usage
+    printf 'unit: %s\n' "$(read_setting unit celsius)"
+    printf 'location: %s\n' "$(read_setting location auto)"
+    ;;
+  unit)
+    [ "$#" -eq 2 ] || usage
+    case "$2" in celsius|fahrenheit) ;; *) usage ;; esac
+    write_setting unit "$2"
+    restart_bar
+    echo "weather unit: $2"
+    ;;
+  location)
+    [ "$#" -ge 2 ] || usage
+    shift
+    location="$*"
+    case "$location" in ''|*$'\n'*|*$'\r'*) usage ;; esac
+    write_setting location "$location"
+    restart_bar
+    echo "weather location: $location"
+    ;;
+  *) usage ;;
+esac

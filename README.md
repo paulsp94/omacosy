@@ -464,10 +464,11 @@ omacosy-wm-switch aerospace   # the way back, and installs AeroSpace
                               # on first use after ./install.sh --omniwm
 ```
 
-The switch is deliberately paranoid: it snapshots your windows, waits
-for you to grant OmniWM's permissions, and requires you to confirm
-within 90 seconds that workspace switching works — anything else
-reverts to AeroSpace automatically and puts your windows back.
+The switch checks itself: it snapshots your windows, stops AeroSpace,
+starts OmniWM and waits until OmniWM manages them. On a first switch,
+grant OmniWM's permissions when macOS asks. If OmniWM does not take
+over within 2 minutes, or you press Ctrl-C, the switch reverts to
+AeroSpace and puts your windows back.
 
 Under OmniWM everything keeps working — bar, overview (with
 type-to-search), gestures, keybindings, themes — and the dwindle

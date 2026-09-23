@@ -5,16 +5,15 @@
 # The 2026-08-25 lesson: the WM is the tool you recover WITH. The first
 # OmniWM switch quit AeroSpace before OmniWM's permissions were
 # granted, and the user was stranded on one workspace with no keys, no
-# swipes and no terminal. So this script refuses to be clever:
+# swipes and no terminal. So this script checks and does not ask:
 #
 #   1. SNAPSHOT the window->workspace map first (the switch scrambles
 #      it; the way back restores it).
-#   2. Start the NEW manager alongside the old one. OmniWM stays
-#      passive until Accessibility is granted, so nothing fights.
-#   3. Only after you confirm the grant does the old manager stop.
-#   4. DEAD-MAN GATE: you must type `yes` within 90 seconds to confirm
-#      workspace switching actually works. Anything else — timeout,
-#      typo, panic — reverts to the old manager automatically.
+#   2. Stop AeroSpace, THEN start OmniWM. Started beside a running
+#      AeroSpace, OmniWM opens its "Conflicting Window Managers" dialog.
+#   3. DEAD-MAN GATE, automatic: OmniWM must report the windows within
+#      the time limit. If macOS asks for its permissions, grant them in
+#      that dialog. A timeout or Ctrl-C reverts to AeroSpace.
 set -uo pipefail
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -72,27 +71,52 @@ omniwm)
     # 0.6.8 retired the project tap — the cask lives in homebrew/cask
     brew install --cask omniwm || { log "install failed"; exit 1; }
   fi
+  if ! pgrep -x AeroSpace >/dev/null && "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; then
+    log "OmniWM is already your window manager."
+    exit 0
+  fi
   snapshot
-  log "Starting OmniWM ALONGSIDE AeroSpace (it stays passive until granted)"
-  open -a OmniWM
-  echo
-  echo "  Grant OmniWM in System Settings -> Privacy & Security:"
-  echo "    - Accessibility        (required — nothing works without it)"
-  echo "    - Input Monitoring     (workspace swipes)"
-  echo
-  # read from the terminal itself, not stdin — run through Claude Code's
-  # `!` prefix (or any pipe) stdin is EOF and both gates would blow
-  # through instantly, turning the switch into a pointless bounce
-  read -r -p "  Press Enter AFTER both grants are done (Ctrl-C aborts, nothing changed): " < /dev/tty
   log "Handing over: stopping AeroSpace, ffm and swipe"
   stop_aerospace_world
-  # OmniWM refuses to start while another WM runs — it sits in a
-  # "Conflicting Window Managers" dialog and does NOT re-check on its
-  # own. Give AeroSpace a moment to die, then relaunch OmniWM: a fresh
-  # activation re-runs the conflict check and it starts managing.
-  sleep 2
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x AeroSpace >/dev/null || break; sleep 0.5; done
+  # an OmniWM left open beside AeroSpace sits in its conflict dialog and
+  # does not check again, so it gets a fresh start
+  osascript -e 'quit app "OmniWM"' 2>/dev/null || true
+  pkill -x OmniWM 2>/dev/null || true
+  sleep 1
   open -a OmniWM
-  sleep 2
+  revert() {
+    trap - INT TERM
+    log "OmniWM did not take over: REVERTING to AeroSpace"
+    osascript -e 'quit app "OmniWM"' 2>/dev/null || true
+    pkill -x OmniWM 2>/dev/null || true
+    start_aerospace_world
+    sleep 2
+    restore_snapshot
+    log "Back on AeroSpace, windows restored."
+    exit 1
+  }
+  trap revert INT TERM
+  # OmniWM reports no window until Accessibility is granted, so the window
+  # count is the proof that it manages the screen
+  WANT=0
+  [ -s "$SNAP" ] && WANT=1
+  ready=0
+  for i in $(seq 1 120); do
+    n="$("$HOME/.local/bin/omacosy-omni" window-count 2>/dev/null)" || n=-1
+    if [ "${n:--1}" -ge "$WANT" ] 2>/dev/null; then ready=1; break; fi
+    if [ "$i" -eq 5 ]; then
+      echo
+      echo "  Waiting for OmniWM. If macOS asks, grant OmniWM:"
+      echo "    - Accessibility        (required — nothing works without it)"
+      echo "    - Input Monitoring     (workspace swipes)"
+      echo "  Up to 2 minutes. Ctrl-C goes back to AeroSpace."
+      echo
+    fi
+    sleep 1
+  done
+  [ "$ready" = 1 ] || revert
+  trap - INT TERM
   # the exec chords (terminal, launcher, theme, lock, ...) lived in
   # aerospace.toml — OmniWM's hotkeys cannot exec, so they move into
   # Karabiner rules for the duration
@@ -110,33 +134,15 @@ omniwm)
   # so the copy above needs a real restart and not just a bootstrap
   launchctl load "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist" 2>/dev/null || true
   launchctl kickstart -k "gui/$(id -u)/com.omacosy.gesture" 2>/dev/null || true
-  echo
-  echo "  VERIFY NOW: switch workspaces with Super+1 and Super+2."
-  echo "  Type 'yes' within 90 seconds if it works."
-  echo "  Anything else reverts to AeroSpace automatically."
-  echo
-  CONFIRM=""
-  read -r -t 90 -p "  working? " CONFIRM < /dev/tty || true
-  if [ "$CONFIRM" = "yes" ]; then
-    log "Switch confirmed. OmniWM is your window manager."
-    # ...including at LOGIN: the first reboot of the OmniWM era booted
-    # straight back into AeroSpace because only the login item decides
-    # who owns the session at boot — the switch has to move it too
-    osascript -e 'tell application "System Events"
-      if exists login item "AeroSpace" then delete login item "AeroSpace"
-      if not (exists login item "OmniWM") then make new login item at end with properties {path:"/Applications/OmniWM.app", hidden:false}
-    end tell' 2>/dev/null || true
-    log "Way back any time: omacosy-wm-switch aerospace"
-  else
-    log "No confirmation — REVERTING to AeroSpace"
-    "$HOME/.local/bin/omacosy-karabiner-omniwm" remove 2>/dev/null || true
-    osascript -e 'quit app "OmniWM"' 2>/dev/null || true
-    pkill -f OmniWM.app 2>/dev/null || true
-    start_aerospace_world
-    sleep 2
-    restore_snapshot
-    log "Back on AeroSpace, windows restored."
-  fi
+  # ...and at LOGIN: the first reboot of the OmniWM era booted straight
+  # back into AeroSpace because only the login item decides who owns the
+  # session at boot — the switch has to move it too
+  osascript -e 'tell application "System Events"
+    if exists login item "AeroSpace" then delete login item "AeroSpace"
+    if not (exists login item "OmniWM") then make new login item at end with properties {path:"/Applications/OmniWM.app", hidden:false}
+  end tell' >/dev/null 2>&1 || true
+  log "OmniWM is your window manager."
+  log "Way back any time: omacosy-wm-switch aerospace"
   ;;
 aerospace)
   # AeroSpace installs on first use, the same as OmniWM above — BEFORE
@@ -149,10 +155,10 @@ aerospace)
   osascript -e 'tell application "System Events"
     if exists login item "OmniWM" then delete login item "OmniWM"
     if not (exists login item "AeroSpace") then make new login item at end with properties {path:"/Applications/AeroSpace.app", hidden:false}
-  end tell' 2>/dev/null || true
+  end tell' >/dev/null 2>&1 || true
   "$HOME/.local/bin/omacosy-karabiner-omniwm" remove 2>/dev/null || true
   osascript -e 'quit app "OmniWM"' 2>/dev/null || true
-  pkill -f OmniWM.app 2>/dev/null || true
+  pkill -x OmniWM 2>/dev/null || true
   start_aerospace_world
   sleep 2
   restore_snapshot

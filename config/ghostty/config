@@ -25,6 +25,11 @@ window-height = 30
 # Accessibility-API tiler always does.
 resize-overlay = never
 
+# Super+W closes a window at once, as it does on Omarchy. Ghostty's default
+# asks first whenever a program such as btop or yazi is running. Set it back
+# to true in your own config to keep that prompt.
+confirm-close-surface = false
+
 # Super+Enter asks the running instance for the window, so the windows
 # share one process and only a cold start goes through `open -na`.
 # Without this, closing the last one leaves a windowless instance running

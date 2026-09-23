@@ -14,27 +14,58 @@
 #   workspaces to the secondary monitor); the map is consumed.
 export PATH="/opt/homebrew/bin:$PATH"
 
-# a live OmniWM answers its socket in ~3 ms; pgrep -f scanned every
-# process for 31 ms per call, and a stale socket after a crash cannot
-# fool a real request the way a file test could
-wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
+case "${1:-}" in
+  collapse | restore) ;;
+  *) echo "usage: omacosy-ws-collapse <collapse|restore>" >&2; exit 2 ;;
+esac
 
 STATE_DIR="$HOME/.local/state/omacosy"
 MAP="$STATE_DIR/collapse-map"
 mkdir -p "$STATE_DIR"
 
-if wm_is_omniwm; then
+# the window manager that answers now: omniwm, aerospace, or nothing. A
+# live OmniWM answers its socket in ~3 ms, and a stale socket after a
+# crash cannot fool a real request the way a file test could.
+current_wm() {
+  if "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; then echo omniwm
+  elif aerospace list-workspaces --focused >/dev/null 2>&1; then echo aerospace
+  fi
+}
+
+# A display change is when a window manager restarts. Wait for one to
+# answer; without one, change nothing and keep the map for the next time.
+WM=
+for _ in $(seq 1 30); do
+  WM="$(current_wm)"
+  [ -n "$WM" ] && break
+  sleep 1
+done
+if [ -z "$WM" ]; then
+  echo "$(date '+%F %T') $1: no window manager answered in 30 s; map kept" >>/tmp/omacosy-ws-collapse.log
+  exit 0
+fi
+
+# A record leaves the map only when its window went back or is gone: a
+# failed move of a live window is written back for the next restore.
+keep_if_live() { # <live ids> <wid> <gws>
+  if grep -qxF "$2" <<<"$1"; then printf '%s\t%s\n' "$2" "$3" >>"$MAP"; fi
+}
+
+if [ "$WM" = omniwm ]; then
   # OmniWM re-routes guest WORKSPACES to the main display on unplug,
   # but their windows stay on two-digit workspaces "after 9" — the
   # same fold as aerospace, done through omacosy-omni. No move-by-id
   # exists, so each window is focused (verified) and then moved; the
   # dance is the same one the overview's drag-reorder uses.
+  #
+  # The map records a window as pid:window-id. OmniWM's own window id
+  # changes at every OmniWM start, so it cannot outlive a restart.
   OMNI="$HOME/.local/bin/omacosy-omni"
   case "${1:-}" in
     collapse)
       NDISP="$("$OMNI" query displays 2>/dev/null | /usr/bin/python3 -c 'import sys,json;print(len(json.load(sys.stdin)["result"]["payload"]["displays"]))' 2>/dev/null)" || exit 0
       [ "$NDISP" = 1 ] || exit 0
-      "$OMNI" query windows id,workspace,app 2>/dev/null | /usr/bin/python3 -c '
+      "$OMNI" query windows id,workspace,app,pid,window-id 2>/dev/null | /usr/bin/python3 -c '
 import sys, json
 wins = json.load(sys.stdin)["result"]["payload"]["windows"]
 used = set(); guests = {}
@@ -44,22 +75,21 @@ for w in wins:
     if not ws.isdigit() or a.startswith("omacosy"): continue
     n = int(ws)
     if n <= 9: used.add(n)
-    else: guests.setdefault(n, []).append(w["id"])
+    else: guests.setdefault(n, []).append((w["id"], str(w["pid"]) + ":" + str(w["windowId"])))
 targets = [s for s in range(1, 10) if s not in used]
 for gws in sorted(guests):
     if not targets: break
     t = targets.pop(0)
-    for wid in guests[gws]:
-        print(f"{wid}	{t}	{gws}")
-' | while IFS=$'	' read -r wid target gws; do
+    for wid, key in guests[gws]:
+        print(f"{wid}	{t}	{gws}	{key}")
+' | while IFS=$'	' read -r wid target gws key; do
         [ -n "$wid" ] || continue
         "$OMNI" focus-window "$wid" >/dev/null 2>&1 || continue
         sleep 0.4
         FOC="$("$OMNI" query focused-window 2>/dev/null | /usr/bin/python3 -c 'import sys,json;print((json.load(sys.stdin)["result"]["payload"].get("window") or {}).get("id",""))' 2>/dev/null)"
         [ "$FOC" = "$wid" ] || continue
         "$OMNI" command move-to-workspace "{\"workspaceNumber\":$target}" >/dev/null 2>&1 &&
-          printf '%s	%s
-' "$wid" "$gws" >>"$MAP"
+          printf '%s\t%s\n' "$key" "$gws" >>"$MAP"
         sleep 0.3
         echo "$(date '+%F %T') collapsed (omniwm) window -> $target (from $gws)" >>/tmp/omacosy-ws-collapse.log
       done
@@ -69,18 +99,43 @@ for gws in sorted(guests):
       [ -s "$MAP" ] || exit 0
       mv "$MAP" "$MAP.run" 2>/dev/null || exit 0
       sleep 1
-      while IFS=$'	' read -r wid gws; do
+      # each record's CURRENT OmniWM id. Records whose window is gone, or
+      # is already back (OmniWM fails a move to the same workspace), drop
+      # out here. A map from before pid:window-id holds an OmniWM id.
+      "$OMNI" query windows id,pid,window-id,workspace 2>/dev/null | /usr/bin/python3 -c '
+import sys, json, time
+now = {}
+for w in json.load(sys.stdin)["result"]["payload"]["windows"]:
+    ws = (w.get("workspace") or {}).get("rawName") or ""
+    now[str(w["pid"]) + ":" + str(w["windowId"])] = (w["id"], ws)
+    now[w["id"]] = (w["id"], ws)
+for line in open(sys.argv[1]):
+    f = line.rstrip("\n").split("\t")
+    if len(f) != 2: continue
+    why = "window gone" if f[0] not in now else ("already on " + f[1] if now[f[0]][1] == f[1] else "")
+    if why: sys.stderr.write(time.strftime("%Y-%m-%d %H:%M:%S") + " restore (omniwm): " + f[0] + " dropped, " + why + "\n")
+    else: print(now[f[0]][0] + "\t" + f[1] + "\t" + f[0])
+' "$MAP.run" 2>>/tmp/omacosy-ws-collapse.log >"$MAP.live"
+      while IFS=$'\t' read -r wid gws key; do
         [ -n "$wid" ] && [ -n "$gws" ] || continue
-        "$OMNI" focus-window "$wid" >/dev/null 2>&1 || continue
-        sleep 0.4
-        "$OMNI" command move-to-workspace "{\"workspaceNumber\":$gws}" >/dev/null 2>&1 &&
+        # the move applies to the focused window, so check focus first,
+        # the same as collapse does
+        FOC=
+        if "$OMNI" focus-window "$wid" >/dev/null 2>&1; then
+          sleep 0.4
+          FOC="$("$OMNI" query focused-window 2>/dev/null | /usr/bin/python3 -c 'import sys,json;print((json.load(sys.stdin)["result"]["payload"].get("window") or {}).get("id",""))' 2>/dev/null)"
+        fi
+        if [ "$FOC" = "$wid" ] &&
+          "$OMNI" command move-to-workspace "{\"workspaceNumber\":$gws}" >/dev/null 2>&1; then
           echo "$(date '+%F %T') restored (omniwm) window -> $gws" >>/tmp/omacosy-ws-collapse.log
+        else
+          printf '%s\t%s\n' "$key" "$gws" >>"$MAP"
+        fi
         sleep 0.3
-      done <"$MAP.run"
-      rm -f "$MAP.run"
+      done <"$MAP.live"
+      rm -f "$MAP.run" "$MAP.live"
       : > /tmp/omacosy-bar-moved
       ;;
-    *) echo "usage: omacosy-ws-collapse <collapse|restore>" >&2; exit 2 ;;
   esac
   exit 0
 fi
@@ -128,16 +183,16 @@ case "${1:-}" in
     # let aerospace finish adopting the reattached monitor (its
     # force-assignment moves the guest workspaces back first)
     sleep 1
+    LIVE="$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null)"
     while IFS=$'\t' read -r wid gws; do
       [ -n "$wid" ] && [ -n "$gws" ] || continue
-      aerospace move-node-to-workspace --window-id "$wid" "$gws" 2>/dev/null &&
+      if aerospace move-node-to-workspace --window-id "$wid" "$gws" 2>/dev/null; then
         echo "$(date '+%F %T') restored $wid -> $gws" >>/tmp/omacosy-ws-collapse.log
+      else
+        keep_if_live "$LIVE" "$wid" "$gws"
+      fi
     done <"$MAP.run"
     rm -f "$MAP.run"
     : > /tmp/omacosy-bar-moved
-    ;;
-  *)
-    echo "usage: omacosy-ws-collapse <collapse|restore>" >&2
-    exit 2
     ;;
 esac

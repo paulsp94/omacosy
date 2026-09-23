@@ -451,6 +451,33 @@ off. Instead the bar grows a pill whenever the focused workspace holds
 floats, and **Super+S** or a click on that pill surfaces the next one
 and brings the cursor with it.
 
+### One window, whole display
+
+Opt-in, off by default: `omacosy-solo-fullscreen on`. A workspace holding a
+single tiled window then shows it the way `Super+F` does: the whole display,
+no outer gaps. A second window drops back to normal tiling, and closing down
+to one goes full again. `omacosy-solo-fullscreen off` hands back every window
+it took, and `status` says what it is holding.
+
+`Super+F` keeps its meaning. The rule acts on a workspace's window COUNT, and
+pressing `Super+F` changes no count, so a deliberate choice is never undone a
+second later; the workspace returns to automatic at the next open or close. A
+window counts as the rule's own only when `fullscreen on --fail-if-noop`
+actually changed it, so a window you fullscreened by hand is never taken over
+and never handed back. Floating windows, and the windows of hidden apps, do
+not count — a workspace *showing* one window behaves as one window.
+
+The rule runs in `omacosy-solo`, a small resident daemon under launchd,
+rather than on a focus hook. It has to be resident: waking from sleep fires
+no focus change and no window event at all, and only a live process receives
+the sleep and wake notifications needed to put fullscreen back. It is also
+its own process rather than part of `omacosy-bar`, because a Swift trap
+cannot be caught and nothing about fullscreening a window should be able to
+take the menu bar down. Switched off, the daemon exits and nothing runs.
+
+Under OmniWM there is nothing to switch: its dwindle layout already gives a
+lone window the frame its own `Super+F` uses (`singleWindowFit = "fill"`).
+
 ## Two window managers (OmniWM option, beta)
 
 AeroSpace is the default. [OmniWM](https://github.com/BarutSRB/OmniWM)

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# omacosy-solo-fullscreen [on|off|toggle|status] — a workspace holding ONE
+# tiled window shows it the way Super+F does: the whole display, no outer
+# gaps. A second window drops back to normal tiling. Opt-in (issue #16):
+# the marker file below is the entire setting. No args = toggle.
+#
+# The rule itself lives in omacosy-solo, a resident daemon under launchd.
+# It has to be resident: a wake fires no focus change and no window event,
+# and only a live process receives NSWorkspace's sleep and wake
+# notifications. This script is the front end and holds no policy.
+#
+# OmniWM needs none of this: dwindle's singleWindowFit = "fill" already
+# gives a lone window the frame its own Super+F uses.
+set -uo pipefail
+
+MARK="$HOME/.config/omacosy/solo-fullscreen"
+# ids the daemon fullscreened, one per line, written as it goes. Read here
+# so `off` hands back what we took even if the daemon is not running.
+OWNED="$HOME/.local/state/omacosy/solo-owned"
+AGENT="gui/$(id -u)/com.omacosy.solo"
+A="$(command -v aerospace || echo /opt/homebrew/bin/aerospace)"
+
+wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
+
+# Hand back ONLY what the daemon took. A window fullscreened by hand is
+# never in this list, so Super+F survives switching the feature off.
+release() {
+  [ -f "$OWNED" ] || return 0
+  while read -r id; do
+    [ -n "$id" ] && "$A" fullscreen off --window-id "$id" >/dev/null 2>&1
+  done <"$OWNED"
+  : >"$OWNED"
+}
+
+case "${1:-toggle}" in
+on)
+  mkdir -p "$(dirname "$MARK")" "$(dirname "$OWNED")" && : >"$MARK"
+  if wm_is_omniwm; then
+    echo "omacosy: solo fullscreen on — OmniWM already fills a lone window; this takes effect under AeroSpace"
+  else
+    launchctl kickstart -k "$AGENT" 2>/dev/null
+    echo "omacosy: a lone window now goes fullscreen. Undo: omacosy-solo-fullscreen off"
+  fi
+  ;;
+off)
+  rm -f "$MARK"
+  # stop it BEFORE handing back, or it would put the windows straight back
+  launchctl kill TERM "$AGENT" 2>/dev/null
+  wm_is_omniwm || release
+  echo "omacosy: solo fullscreen off"
+  ;;
+toggle)
+  if [ -e "$MARK" ]; then exec "$0" off; else exec "$0" on; fi
+  ;;
+status)
+  if [ -e "$MARK" ]; then
+    # -s, not -f: an EMPTY file exists, and `grep -c` on it prints 0 and then
+    # exits non-zero, so a `|| echo 0` fallback printed the count twice.
+    n=0
+    [ -s "$OWNED" ] && n=$(grep -c . "$OWNED")
+    echo "on — $n window(s) fullscreened by the rule"
+  else echo "off"; fi
+  ;;
+*)
+  echo "usage: omacosy-solo-fullscreen [on|off|toggle|status]" >&2
+  exit 1
+  ;;
+esac

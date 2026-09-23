@@ -78,7 +78,7 @@ scrollModifierKey = "optionShift"
 scrollSensitivity = 5.0
 trackpadScrollStyle = "snap"
 workspaceSwipeAxis = "horizontal"
-workspaceSwipeEnabled = true
+workspaceSwipeEnabled = false
 workspaceSwipeFingerCount = 4
 
 [hiddenBar]

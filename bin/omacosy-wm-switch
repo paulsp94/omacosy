@@ -71,6 +71,9 @@ omniwm)
     log "Installing OmniWM (first use of the omniwm option)"
     # 0.6.8 retired the project tap — the cask lives in homebrew/cask
     brew install --cask omniwm || { log "install failed"; exit 1; }
+    # recorded like install.sh's casks, so uninstall.sh removes it
+    grep -qxF "brew-cask omniwm" "$STATE_DIR/manifest" 2>/dev/null \
+      || echo "brew-cask omniwm" >> "$STATE_DIR/manifest"
   fi
   snapshot
   log "Starting OmniWM ALONGSIDE AeroSpace (it stays passive until granted)"

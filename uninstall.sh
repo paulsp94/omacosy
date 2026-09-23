@@ -250,12 +250,103 @@ fi
 # --- 5. Homebrew packages omacosy itself installed --------------------------
 # Only packages the manifest says brew bundle ADDED on this machine —
 # anything the user had before is untouched.
+# The user picks what to KEEP from what omacosy installed: apps and the
+# tools installed by name, not the libraries they need (brew removes a
+# library by itself once nothing needs it). The list draws on /dev/tty, so
+# it works when the output goes to a file; with no terminal, all go.
+pick_keep() { # <label>... ; sets KEEP_IDX to the indexes kept
+  local n=$# cur=0 i key rest ans k r
+  local labels=("$@") sel=()
+  for ((i = 0; i < n; i++)); do sel[i]=0; done
+  trap 'printf "\033[?25h" >/dev/tty; exit 130' INT
+  printf '\033[?25l' >/dev/tty
+  while :; do
+    printf '\nomacosy installed these. Which would you like to KEEP?\n' >/dev/tty
+    printf '  up/down: move   space: keep or not   a: all   enter: done\n\n' >/dev/tty
+    for ((i = 0; i < n; i++)); do
+      [ "${sel[i]}" = 1 ] && k='[x]' || k='[ ]'
+      if [ "$i" = "$cur" ]; then
+        printf '\033[7m> %s %s\033[0m\033[K\n' "$k" "${labels[i]}" >/dev/tty
+      else
+        printf '  %s %s\033[K\n' "$k" "${labels[i]}" >/dev/tty
+      fi
+    done
+    IFS= read -rsn1 key </dev/tty || key=""
+    case "$key" in
+      $'\e') rest=""; IFS= read -rsn2 -t 1 rest </dev/tty || true
+              case "$rest" in '[A') [ "$cur" -gt 0 ] && cur=$((cur - 1)) ;;
+                              '[B') [ "$cur" -lt $((n - 1)) ] && cur=$((cur + 1)) ;; esac ;;
+      k) [ "$cur" -gt 0 ] && cur=$((cur - 1)) ;;
+      j) [ "$cur" -lt $((n - 1)) ] && cur=$((cur + 1)) ;;
+      ' ') sel[cur]=$((1 - sel[cur])) ;;
+      a) r=1; for ((i = 0; i < n; i++)); do [ "${sel[i]}" = 1 ] || r=0; done
+         for ((i = 0; i < n; i++)); do sel[i]=$((1 - r)); done ;;
+      '')
+        printf '\n' >/dev/tty
+        k=""; r=""
+        for ((i = 0; i < n; i++)); do
+          if [ "${sel[i]}" = 1 ]; then k="$k ${labels[i]%% *}"; else r="$r ${labels[i]%% *}"; fi
+        done
+        printf 'Keep:  %s\nRemove:%s\n' "${k:- (nothing)}" "${r:- (nothing)}" >/dev/tty
+        ans=""
+        # asked on the terminal too, so it stays out of an output file
+        printf 'Continue? [y/N, n goes back to the list] ' >/dev/tty
+        IFS= read -r ans </dev/tty || ans=y
+        case "$ans" in
+          [yY]*) KEEP_IDX=""
+                 for ((i = 0; i < n; i++)); do [ "${sel[i]}" = 1 ] && KEEP_IDX="$KEEP_IDX $i "; done
+                 printf '\033[?25h' >/dev/tty; trap - INT; return 0 ;;
+        esac
+        continue ;;  # the answer moved the screen: draw the list afresh below
+    esac
+    # back to the top of the list to draw it again
+    printf '\033[%dA\033[J' $((n + 4)) >/dev/tty
+  done
+}
+
 if [ -f "$MANIFEST" ] && grep -qE '^brew-(formula|cask) ' "$MANIFEST"; then
-  log "Removing Homebrew packages omacosy installed (pre-existing ones stay)"
-  grep '^brew-formula ' "$MANIFEST" | awk '{print $2}' \
-    | xargs -n1 brew uninstall 2>/dev/null || true
-  grep '^brew-cask ' "$MANIFEST" | awk '{print $2}' \
-    | xargs -n1 brew uninstall --cask 2>/dev/null || true
+  ON_REQUEST="$(brew list --formula --installed-on-request 2>/dev/null || true)"
+  NAMES=() KINDS=() LABELS=()
+  for f in $(grep '^brew-formula ' "$MANIFEST" | awk '{print $2}'); do
+    printf '%s\n' "$ON_REQUEST" | grep -qx "$f" || continue
+    NAMES+=("$f"); KINDS+=(formula); LABELS+=("$f (command-line tool)")
+  done
+  for c in $(grep '^brew-cask ' "$MANIFEST" | awk '{print $2}'); do
+    brew list --cask "$c" >/dev/null 2>&1 || continue
+    NAMES+=("$c"); KINDS+=(cask); LABELS+=("$c (app)")
+  done
+  KEEP_IDX=""
+  if [ "${#NAMES[@]}" -gt 0 ] && (: </dev/tty) 2>/dev/null; then
+    pick_keep "${LABELS[@]}"
+  fi
+  log "Removing the Homebrew packages omacosy installed (yours and the kept ones stay)"
+  FAILED="" FORMULAE=""
+  for ((i = 0; i < ${#NAMES[@]}; i++)); do
+    case "$KEEP_IDX" in *" $i "*) log "  keeping ${NAMES[i]}"; continue ;; esac
+    [ "${KINDS[i]}" = formula ] && FORMULAE="$FORMULAE ${NAMES[i]}"
+  done
+  # twice: brew refuses a formula another one still needs, until that one
+  # is gone, so only the second pass shows what really stays
+  for f in $FORMULAE; do
+    brew uninstall "$f" >/dev/null 2>&1 || true
+  done
+  REMOVED=""
+  for f in $FORMULAE; do
+    if brew list --formula "$f" >/dev/null 2>&1; then
+      brew uninstall "$f" || { FAILED="$FAILED $f"; continue; }
+    fi
+    REMOVED="$REMOVED $f"
+  done
+  [ -z "$REMOVED" ] || log "  removed:$REMOVED"
+  # one at a time, errors shown, on this terminal, where a cask can ask for
+  # your password: errors were hidden, and on one Mac no cask went
+  for ((i = 0; i < ${#NAMES[@]}; i++)); do
+    [ "${KINDS[i]}" = cask ] || continue
+    case "$KEEP_IDX" in *" $i "*) continue ;; esac
+    brew uninstall --cask "${NAMES[i]}" || FAILED="$FAILED ${NAMES[i]}"
+  done
+  [ -z "$FAILED" ] \
+    || log "WARNING: could not remove:$FAILED (see the messages above)"
 fi
 # the login item would point at an app that is gone
 if [ ! -d /Applications/OmniWM.app ]; then

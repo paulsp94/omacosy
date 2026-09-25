@@ -340,6 +340,51 @@ int omniwm_window_count(omniwm* c)
 	return n;
 }
 
+// Blocks until the focus channel names a window other than old_id. OmniWM
+// pushes focus changes, so nothing is asked while waiting. The subscription
+// sends the current focus first, so a change that landed before it counts.
+char* omniwm_wait_focus_change(const char* old_id, int timeout_ms, int no_focus_ms)
+{
+	omniwm* s = omniwm_new();
+	if (!s) return NULL;
+	char* ack = omniwm_request(s, "subscribe",
+		"{\"channels\":[\"focus\"],\"allChannels\":false,\"sendInitial\":true}");
+	free(ack);
+	struct timeval start, now;
+	gettimeofday(&start, NULL);
+	int limit = timeout_ms, nothing_focused = 0;
+	char* result = NULL;
+	for (;;) {
+		gettimeofday(&now, NULL);
+		int left = limit - (int)((now.tv_sec - start.tv_sec) * 1000 + (now.tv_usec - start.tv_usec) / 1000);
+		if (left <= 0) break;
+		struct timeval tv = { left / 1000, (left % 1000) * 1000 };
+		setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+		char* line = read_line(s->fd, s->rbuf, &s->rlen, &s->rcap);
+		if (!line) break; // timeout or dead
+		yyjson_doc* d = yyjson_read(line, strlen(line), 0);
+		free(line);
+		if (!d) continue;
+		const char* id = yyjson_get_str(yyjson_obj_get(yyjson_obj_get(omniwm_payload_of(d), "window"), "id"));
+		if (!id || !id[0]) {
+			// nothing focused: give it no_focus_ms from the subscription
+			nothing_focused = 1;
+			limit = no_focus_ms < timeout_ms ? no_focus_ms : timeout_ms;
+		} else if (strcmp(id, old_id)) {
+			result = strdup(id);
+			yyjson_doc_free(d);
+			break;
+		} else {
+			nothing_focused = 0;
+			limit = timeout_ms;
+		}
+		yyjson_doc_free(d);
+	}
+	omniwm_close(s);
+	if (!result && nothing_focused) result = strdup("");
+	return result;
+}
+
 int omniwm_wait_window_count_above(int baseline, int timeout_ms)
 {
 	// a dedicated connection: subscriptions turn the stream into events

@@ -38,5 +38,9 @@ int omniwm_cycle(omniwm* c, int step);
 // blocks until a windows-changed event reports more windows than
 // `baseline`, or timeout. Returns the new count, or -1 on timeout.
 int omniwm_wait_window_count_above(int baseline, int timeout_ms);
+// blocks until the focus channel names a window other than `old_id`.
+// Returns its id (malloc'd), "" when nothing had focus `no_focus_ms` after
+// the subscription, or NULL on timeout.
+char* omniwm_wait_focus_change(const char* old_id, int timeout_ms, int no_focus_ms);
 // current window count via query, or -1
 int omniwm_window_count(omniwm* c);

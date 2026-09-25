@@ -399,10 +399,11 @@ if [ ! -x "$HOME/.local/bin/omacosy-ffm" ] || [ "$REPO_DIR/helper/ffm.swift" -nt
   swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight -o "$HOME/.local/bin/omacosy-ffm" "$REPO_DIR/helper/ffm.swift"
 fi
 
-# focused-window border ring (replaces JankyBorders; no permissions;
-# SkyLight for the window-server event notifications)
+# focused-window border ring (replaces JankyBorders; SkyLight for the
+# window-server event notifications; the optional Accessibility grant only
+# lets it hear a close at once — see the README permissions table)
 if [ ! -x "$HOME/.local/bin/omacosy-borders" ] || [ "$REPO_DIR/helper/borders.swift" -nt "$HOME/.local/bin/omacosy-borders" ]; then
-  log "Building omacosy-borders"
+  log "Building omacosy-borders (grant Accessibility when prompted)"
   swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight -o "$HOME/.local/bin/omacosy-borders" "$REPO_DIR/helper/borders.swift"
 fi
 # stable code identity so TCC grants survive rebuilds (skipped when no
@@ -426,6 +427,13 @@ fi
 # the makefile re-signs ad-hoc as part of the build, so signing here
 # would be overwritten and every rebuild would invalidate the
 # Accessibility grant again)
+
+# Ask for the optional Accessibility grant once, here, so the daemon never
+# prompts at launch (KeepAlive would re-ask at every login). Prompts only when
+# the grant is missing; refusing it only makes a Cmd-W close heard ~0.25 s late.
+if [ -x "$HOME/.local/bin/omacosy-borders" ]; then
+  "$HOME/.local/bin/omacosy-borders" --request-accessibility >/dev/null 2>&1 || true
+fi
 
 # hover-ignore list (launchd agents can't read ~/Documents — copied)
 mkdir -p "$HOME/.config/omacosy"

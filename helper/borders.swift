@@ -2,7 +2,8 @@
 // One click-through overlay window whose CAShapeLayer stroke is
 // rasterized by the WindowServer (no window-sized client bitmaps — the
 // architecture that made JankyBorders cost hundreds of MB). Needs no
-// permissions at all.
+// permission. With Accessibility it also hears a closing window at once
+// (see watchClose); without it, it falls back to watchAfterClick.
 //
 // Event-driven via private SkyLight window-server notifications (the
 // same layer JankyBorders and yabai use, verified on macOS 26.3):
@@ -15,6 +16,18 @@
 // CFMachPort pump at the bottom; registrations succeed silently and
 // deliver nothing without it.
 import AppKit
+
+// install.sh calls `omacosy-borders --request-accessibility` once, at install
+// time, for the optional Accessibility grant. The daemon never prompts: with
+// KeepAlive, prompting at launch would ask again at every login for a user who
+// declined. Without the grant the ring falls back to watchAfterClick.
+if CommandLine.arguments.contains("--request-accessibility") {
+    if !AXIsProcessTrusted() {
+        _ = AXIsProcessTrustedWithOptions(
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    }
+    exit(0)
+}
 
 // --- SkyLight externs ---------------------------------------------------
 
@@ -58,6 +71,14 @@ let EVENT_WINDOW_ORDER: UInt32 = 808
 let EVENT_WINDOW_VISIBILITY: UInt32 = 815
 let EVENT_WINDOW_CREATE: UInt32 = 1325
 let EVENT_WINDOW_DESTROY: UInt32 = 1326
+// a minimize begins; the payload names the animation, not the window
+// (docs/probes/ring-events.swift, below too)
+let EVENT_WINDOW_MINIMIZE: UInt32 = 1327
+// Both name the window in their payload. 816 fires as a window leaves the
+// screen (hide, quit, the end of a close fade or of a minimize); 804 as it
+// is removed (close, quit). Measured with docs/probes/ring-events.swift.
+let EVENT_WINDOW_OFFSCREEN: UInt32 = 816
+let EVENT_WINDOW_REMOVED: UInt32 = 804
 let EVENT_FRONT_CHANGE: UInt32 = 1508
 
 // styling from ~/.config/omacosy/borders.conf (width, radius, per-app
@@ -130,6 +151,28 @@ var lastFullScanAt = Date.distantPast
 // the flag clear and drags keep the shortcut.
 var focusMayHaveChanged = true
 
+// A window on its way out stays listed, on screen and pickable, so it has
+// to be recognised by HOW it goes.
+//
+// Close and quit fade it over ~250 ms: alpha falls below that window's own
+// peak, which leaves windows that are translucent by design alone.
+//
+// It sees a fade, not a close: an app that dims its own window (a video
+// overlay, a brightness shutter) also falls below the peak and loses the
+// ring until the next focus change.
+//
+// Minimize keeps it opaque and shrinks it into the Dock; event 1327 marks
+// its start (see minimizeBegan).
+var peakAlpha: [UInt32: Double] = [:]
+func leaving(_ w: [String: Any]) -> Bool {
+    guard let n = w["kCGWindowNumber"] as? Int,
+        let a = (w["kCGWindowAlpha"] as? NSNumber)?.doubleValue else { return false }
+    let wid = UInt32(n)
+    let peak = max(peakAlpha[wid] ?? 0, a)
+    peakAlpha[wid] = peak
+    return a < peak * 0.9
+}
+
 // frontmost app's topmost normal window, in CG (top-left) coordinates
 func focusedWindowFrame() -> (CGRect, String)? {
     var psn = PSN()
@@ -150,7 +193,7 @@ func focusedWindowFrame() -> (CGRect, String)? {
         let b = w["kCGWindowBounds"] as? [String: Any],
         let x = b["X"] as? CGFloat, let y = b["Y"] as? CGFloat,
         let wd = b["Width"] as? CGFloat, let h = b["Height"] as? CGFloat,
-        wd > 60, h > 60 {
+        wd > 60, h > 60, !leaving(w) {
         return (CGRect(x: x, y: y, width: wd, height: h), name)
     }
     lastFullScanAt = now
@@ -163,7 +206,7 @@ func focusedWindowFrame() -> (CGRect, String)? {
             let b = w["kCGWindowBounds"] as? [String: Any],
             let x = b["X"] as? CGFloat, let y = b["Y"] as? CGFloat,
             let wd = b["Width"] as? CGFloat, let h = b["Height"] as? CGFloat,
-            wd > 60, h > 60
+            wd > 60, h > 60, !leaving(w)
         else { continue }
         let rect = CGRect(x: x, y: y, width: wd, height: h)
         // AeroSpace drags windows through offscreen stash positions
@@ -374,6 +417,7 @@ var pendingSince = Date.distantPast
 var shownApp = ""
 var justHid = true
 var lastFrame = CGRect.zero
+var shownWid: UInt32 = 0 // the window the ring marks, 0 while hidden
 var lastWsSwitchAt = Date.distantPast
 shape.strokeColor = loadColor()
 shape.lineWidth = conf.width
@@ -385,8 +429,18 @@ func hideRing(_ reason: String) {
     }
     lastFrame = .zero
     shownApp = ""
+    shownWid = 0
     justHid = true
     missSince = nil
+}
+
+// Hidden (Cmd+H) windows leave the on-screen list; closed, quit and
+// minimized ones animate out first. Each makes the miss final.
+func ringedWindowGone() -> Bool {
+    guard shownWid != 0 else { return false }
+    guard let w = (CGWindowListCopyWindowInfo(.optionIncludingWindow, shownWid)
+        as? [[String: Any]])?.first else { return true }
+    return leaving(w)
 }
 
 // Storm handling (drags fire ~90 events/s): tick SYNCHRONOUSLY on the
@@ -461,6 +515,12 @@ func tick() {
             missSince = nil
             return
         }
+        // a window that is gone cannot come back within the gate below
+        if ringedWindowGone() {
+            hideRing("window-gone")
+            syncShroud(nil)
+            return
+        }
         // transient misses happen around app switches and popups —
         // hide only when the miss persists, or the ring blinks. Gates
         // are wall-clock, not tick counts: event-driven ticks arrive
@@ -508,6 +568,8 @@ func tick() {
         }
     }
     justHid = false
+    shownWid = lastWid
+    watchClose(shownWid)
 
     guard f != lastFrame || !win.isVisible else { return }
     // same app moving on the same display glides tick-by-tick; any
@@ -618,12 +680,49 @@ func rebuildSubscriptions() {
     let set = Set(wids)
     guard set != subscribed, !wids.isEmpty else { return }
     subscribed = set
+    peakAlpha = peakAlpha.filter { set.contains($0.key) }
     _ = wids.withUnsafeBufferPointer {
         SLSRequestNotificationsForWindows(cid, $0.baseAddress!, Int32(wids.count))
     }
 }
 
-let slsCallback: NotifyProc = { event, _, _, _ in
+// The window a leave event names, from its payload: the first word for
+// 804 and 816, the third for 1326 ("1, 0, wid").
+func windowNamed(by event: UInt32, _ data: UnsafeMutableRawPointer?, _ len: Int) -> UInt32? {
+    guard let d = data else { return nil }
+    let at = event == EVENT_WINDOW_DESTROY ? 8 : 0
+    guard len >= at + 4 else { return nil }
+    return d.load(fromByteOffset: at, as: UInt32.self)
+}
+// 1327's payload names the animation, not the window. The ringed window is
+// the one Cmd+M and the Dock act on, so watch whether IT shrinks, every
+// 20 ms for at most 0.7 s: the genie starts some 150-400 ms after the event.
+// A neighbour that AeroSpace retiles is never looked at.
+func minimizeBegan() {
+    let wid = shownWid
+    guard wid != 0, let a0 = windowArea(wid) else { return }
+    let started = Date()
+    func check() {
+        guard win.isVisible, shownWid == wid else { return }
+        if (windowArea(wid) ?? 0) < a0 * 0.8 { hideRing("minimize"); syncShroud(nil); return }
+        guard Date().timeIntervalSince(started) < 0.7 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: check)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: check)
+}
+func windowArea(_ wid: UInt32) -> CGFloat? {
+    guard let w = (CGWindowListCopyWindowInfo(.optionIncludingWindow, wid) as? [[String: Any]])?.first,
+        let b = w["kCGWindowBounds"] as? [String: Any],
+        let wd = b["Width"] as? CGFloat, let h = b["Height"] as? CGFloat else { return nil }
+    return wd * h
+}
+let slsCallback: NotifyProc = { event, data, len, _ in
+    if event == EVENT_WINDOW_MINIMIZE { minimizeBegan() }
+    if [EVENT_WINDOW_OFFSCREEN, EVENT_WINDOW_REMOVED, EVENT_WINDOW_DESTROY].contains(event),
+        win.isVisible, shownWid != 0, windowNamed(by: event, data, len) == shownWid {
+        hideRing("event-gone")
+        syncShroud(nil)
+    }
     if event == EVENT_WINDOW_CREATE || event == EVENT_WINDOW_DESTROY {
         rebuildSubscriptions()
     }
@@ -637,7 +736,8 @@ let slsCallback: NotifyProc = { event, _, _, _ in
 
 for code in [EVENT_WINDOW_MOVE, EVENT_WINDOW_RESIZE, EVENT_WINDOW_ORDER,
              EVENT_WINDOW_VISIBILITY, EVENT_WINDOW_CREATE,
-             EVENT_WINDOW_DESTROY, EVENT_FRONT_CHANGE] {
+             EVENT_WINDOW_DESTROY, EVENT_WINDOW_MINIMIZE, EVENT_FRONT_CHANGE,
+             EVENT_WINDOW_OFFSCREEN, EVENT_WINDOW_REMOVED] {
     _ = SLSRegisterNotifyProc(slsCallback, code, nil)
 }
 rebuildSubscriptions()
@@ -657,8 +757,100 @@ if SLSGetEventPort(cid, &eventPort).rawValue == 0,
     tlog("SLSGetEventPort failed — running on heartbeat only")
 }
 
+// A close sends WindowServer nothing during its ~250 ms fade: 816, 804 and
+// 1326 come at its end (docs/probes/ring-events.swift, `all` mode). The app
+// itself reports kAXUIElementDestroyed at the START of the fade, 235-275 ms
+// earlier (measured 2026-09-24 on TextEdit: Cmd-W, the red button and
+// AppleScript, 3 runs each). So, with Accessibility, the ringed window alone
+// is watched for that report; nothing runs between events.
+//
+// READ-ONLY by design, and keep it so: the grant covers every later build of
+// this file without asking the user again. The ring reads an app's window
+// list and registers ONE notification on ONE window. It never performs an
+// action, never sets an attribute, and never reads what a window shows.
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ el: AXUIElement, _ wid: UnsafeMutablePointer<UInt32>) -> AXError
+
+let axQueue = DispatchQueue(label: "omacosy-borders.ax")   // AX calls block: never on main
+var axObserver: AXObserver?
+var axObserverPid: pid_t = 0
+var axWatchWid: UInt32 = 0
+var axWatchedEl: AXUIElement?   // touched on axQueue only
+
+let axDestroyed: AXObserverCallback = { _, _, _, refcon in
+    let wid = UInt32(UInt(bitPattern: refcon))
+    guard wid != 0, wid == shownWid, win.isVisible else { return }
+    hideRing("ax-destroyed")
+    syncShroud(nil)
+}
+
+func watchClose(_ wid: UInt32) {
+    // trust first: recording axWatchWid before this check would swallow the
+    // window when the grant arrives mid-run, leaving it unwatched until focus
+    // moved.
+    guard wid != 0, AXIsProcessTrusted() else { return }
+    guard wid != axWatchWid else { return }
+    axWatchWid = wid
+    guard let pid = (CGWindowListCopyWindowInfo(.optionIncludingWindow, wid) as? [[String: Any]])?
+        .first?["kCGWindowOwnerPID"] as? pid_t else { return }
+    if pid != axObserverPid || axObserver == nil {
+        if let old = axObserver {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(old), .defaultMode)
+        }
+        var o: AXObserver?
+        guard AXObserverCreate(pid, axDestroyed, &o) == .success, let o else { axObserver = nil; return }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(o), .defaultMode)
+        axObserver = o
+        axObserverPid = pid
+        axQueue.async { axWatchedEl = nil }   // it belonged to the old observer
+    }
+    let obs = axObserver!
+    axQueue.async {
+        if let el = axWatchedEl {
+            AXObserverRemoveNotification(obs, el, kAXUIElementDestroyedNotification as CFString)
+            axWatchedEl = nil
+        }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)   // a hung app cannot hold this queue
+        var list: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &list) == .success,
+            let windows = list as? [AXUIElement] else { return }
+        for el in windows {
+            var w: UInt32 = 0
+            guard _AXUIElementGetWindow(el, &w) == .success, w == wid else { continue }
+            AXObserverAddNotification(obs, el, kAXUIElementDestroyedNotification as CFString,
+                UnsafeMutableRawPointer(bitPattern: UInt(wid)))
+            axWatchedEl = el
+            return
+        }
+    }
+}
+
+// Without Accessibility: a click can start a close (the red button), so a
+// click starts a short check of the ringed window, every 20 ms for at most
+// 0.7 s. A Cmd-W close then leaves on 816, at the end of the fade.
+func watchAfterClick() {
+    let wid = shownWid
+    guard wid != 0 else { return }
+    let started = Date()
+    func check() {
+        guard win.isVisible, shownWid == wid else { return }
+        if ringedWindowGone() { hideRing("window-gone"); syncShroud(nil); return }
+        guard Date().timeIntervalSince(started) < 0.7 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: check)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: check)
+}
+let clickWatch = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { _ in
+    if !AXIsProcessTrusted() { watchAfterClick() }
+}
+// The Accessibility prompt is asked once, by install.sh
+// (--request-accessibility), never here: the daemon only checks
+// AXIsProcessTrusted() (watchClose, the click monitor), so a declined grant
+// is not re-asked at every login.
+
 // safety net for anything eventless (subscription races, missed
-// events): cheap at this cadence, and the only poll left
+// events): cheap at this cadence, and the only whole-list poll
 let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
     rebuildSubscriptions()
     tick()

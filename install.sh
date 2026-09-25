@@ -431,6 +431,9 @@ fi
 mkdir -p "$HOME/.config/omacosy"
 cp "$REPO_DIR/config/ffm-ignore" "$HOME/.config/omacosy/ffm-ignore"
 cp "$REPO_DIR/config/borders.conf" "$HOME/.config/omacosy/borders.conf"
+# -n, unlike borders.conf above: this file is the only place the bar
+# behaviour can be overridden, so a re-run must not throw a choice away.
+cp -n "$REPO_DIR/config/bar.conf" "$HOME/.config/omacosy/bar.conf" 2>/dev/null || true
 # app choices, RESOLVED (apps.local.conf already applied), for the same
 # reason: the bar's activity pill launches $TERMINAL and cannot read the
 # repo from a launchd agent when the clone is TCC-protected

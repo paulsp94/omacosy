@@ -132,6 +132,9 @@ wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
 if wm_is_omniwm; then
   OMNI="$HOME/.local/bin/omacosy-omni"
   mult="$(sed -n 's/^splitWidthMultiplier = //p' "$HOME/.config/omniwm/settings.toml" 2>/dev/null | head -1)"
+  # A Super+F window reports the display's size, not its tile's, and the new
+  # window would land in its hidden tile, on top of it. End it first.
+  "$OMNI" leave-fullscreen >/dev/null 2>&1 || true
   "$OMNI" preselect-for-focused "${mult:-1.4}" >/dev/null 2>&1 || true
   before="$("$OMNI" window-count 2>/dev/null || echo 0)"
   # the next spawn may go once this window exists: a windows-changed

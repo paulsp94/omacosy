@@ -33,6 +33,11 @@ backup "$REPO_DIR/config/apps.local.conf" apps.local.conf
 # whichever of the two is running (the OmniWM trial branch may have
 # either live; pkill backstops OmniWM's quit handler).
 log "Stopping AeroSpace/OmniWM, the bar, borders"
+# omacosy's own permission entries go while the bundles still exist:
+# tccutil finds a bundle only through the app it names
+for id in com.omacosy.bar com.omacosy.gesture com.omacosy.ffm; do
+  tccutil reset All "$id" >/dev/null 2>&1 || true
+done
 osascript -e 'quit app "AeroSpace"' 2>/dev/null || true
 osascript -e 'quit app "OmniWM"' 2>/dev/null || true
 pkill -f OmniWM.app 2>/dev/null || true
@@ -41,6 +46,7 @@ launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" 2>/dev/n
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" "$HOME/.local/bin/omacosy-borders"
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.ffm.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.ffm.plist" "$HOME/.local/bin/omacosy-ffm"
+rm -rf "$HOME/.local/share/omacosy/omacosy-ffm.app"
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.dwindle.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.dwindle.plist" "$HOME/.local/bin/omacosy-dwindle"
 launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.bar.plist" 2>/dev/null || true
@@ -292,11 +298,12 @@ Done. Left in place on purpose:
   - If AeroSpace still appears in System Settings -> General -> Login Items, remove it there.
   - OmniWM.app is a brew cask like the rest: removed above only when the
     manifest says omacosy installed it; one that predates omacosy stays.
-  - Permission entries (Accessibility, Input Monitoring, Screen Recording,
-    Location, Bluetooth) stay listed in System Settings -> Privacy &
-    Security — macOS lets no script remove them. The binaries they named
-    are gone, so the entries are inert; delete them there if you want the
-    lists clean.
+  - Permission entries: those of the bar, omacosy-gesture and omacosy-ffm
+    were removed above. Entries of plain programs (omacosy-overview, older
+    installs) stay listed in System Settings -> Privacy & Security, because
+    macOS lets a script remove only an app's entries. The programs they
+    named are gone, so the entries are inert; delete them there if you want
+    the lists clean.
   - The repo itself and your shell tools (fzf, eza, zoxide, ...) are untouched.
 EOF
 

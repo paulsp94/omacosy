@@ -237,13 +237,23 @@ func focus(pid: pid_t, rect: CGRect, allowRaise: Bool) {
     }
 }
 
+// A running process does not see a grant made after it started (measured
+// on macOS 27.2: polling AXIsProcessTrusted stayed false), so a process
+// without the grant exits and launchd's KeepAlive starts a fresh one,
+// about every 10 s. The dialog comes once: the marker file remembers it.
+let promptedFlag = "/tmp/omacosy-ffm-prompted-\(getuid())"
+let prompted = FileManager.default.fileExists(atPath: promptedFlag)
 guard AXIsProcessTrustedWithOptions(
-    ["AXTrustedCheckOptionPrompt": true] as CFDictionary) else {
-    FileHandle.standardError.write("omacosy-ffm: waiting for Accessibility permission…\n".data(using: .utf8)!)
-    // poll until granted, then continue
-    while !AXIsProcessTrusted() { Thread.sleep(forTimeInterval: 1) }
-    exit(2) // relaunch (launchd KeepAlive) so the grant applies cleanly
+    ["AXTrustedCheckOptionPrompt": !prompted] as CFDictionary) else {
+    if !prompted {
+        FileManager.default.createFile(atPath: promptedFlag, contents: nil)
+        FileHandle.standardError.write("omacosy-ffm: waiting for Accessibility permission…\n".data(using: .utf8)!)
+    }
+    Thread.sleep(forTimeInterval: 5)
+    exit(2)
 }
+// granted: a later revocation shows the dialog again
+try? FileManager.default.removeItem(atPath: promptedFlag)
 
 // Shared by motion events and the dwell confirmation: hit-test the
 // cursor and either focus (dwell confirmed) or arm the dwell timer.

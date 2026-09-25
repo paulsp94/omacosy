@@ -142,10 +142,35 @@ something else, and the swipe is the only way in.
   (`/tmp/omacosy-*.log`) carry window titles, app names and workspace
   numbers, never input.
 
-Grants are tied to a binary's code signature. With an Apple Development
-identity present, `install.sh` signs every helper with a stable
-identifier so rebuilds keep their grants; without one, macOS treats
-each rebuild as a new app and you re-grant after every install.
+### Keep your permissions across updates
+
+macOS keeps each permission with the program's code signature. With an
+Apple Development certificate on this Mac, `install.sh` signs every
+helper with it, and an update keeps all your permissions. Without one,
+macOS treats each rebuilt helper as a new app, and you grant its
+permissions again after an update. omacosy works either way, and
+`install.sh` ends with a warning while no certificate signs.
+
+To add a certificate (free, needs an Apple ID):
+
+1. Install Xcode from the App Store and open it once.
+2. Xcode → Settings → Accounts: add your Apple ID.
+3. Select it, then **Manage Certificates → + → Apple Development**.
+4. Run `./install.sh` again, or `omacosy-update`.
+
+You can do this before or after installing omacosy. The next install
+signs with the certificate. macOS then asks once more for each
+permission, because the signature changed; after that, no update asks
+again.
+
+If `install.sh` says the certificate cannot sign because Apple's G3
+certificate is missing, answer `y` when it offers to add it, or add it
+yourself:
+
+```sh
+cd /tmp && curl -fsSLO https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+security add-certificates -k ~/Library/Keychains/login.keychain-db AppleWWDRCAG3.cer
+```
 
 ## App choices
 

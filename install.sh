@@ -339,6 +339,90 @@ pkill -f "Karabiner-Menu|Karabiner-NotificationWindow" 2>/dev/null || true
 # theme scripts on PATH (aerospace's theme chord calls ~/.local/bin/theme-next)
 mkdir -p "$HOME/.local/bin"
 
+# --- code signing -----------------------------------------------------------
+# macOS keeps each permission grant with a rule taken from the program's
+# signature. Signed with one Apple Development identity, a rebuild keeps
+# its grants (measured on macOS 27.2); signed ad hoc, every rebuild is a
+# new program to macOS. The identity is TESTED by signing a scratch file:
+# a certificate can be listed and still fail to sign.
+G3_URL="https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
+G3_SHA256="DC:F2:18:78:C7:7F:41:98:E4:B4:61:4F:03:D6:96:D8:9C:66:C6:60:08:D4:24:4E:1B:99:16:1A:AC:91:60:1F"
+SIGN_ID=""
+SIGN_ERR=""
+SIGN_WARN=""
+try_sign() { # <identity> -> 0 when codesign can sign with it; its message in SIGN_ERR
+  local f rc=0
+  f="$(mktemp)"
+  cp /usr/bin/true "$f"
+  SIGN_ERR="$(codesign -f -s "$1" "$f" 2>&1)" || rc=$?
+  rm -f "$f"
+  return $rc
+}
+# Apple's intermediate that issues Apple Development certificates. Xcode
+# does not always install it, and without it codesign cannot build the
+# chain. Pinned: a download with another fingerprint is refused.
+add_g3() {
+  local f
+  f="$(mktemp)"
+  if ! curl -fsSL -o "$f" "$G3_URL"; then
+    log "  could not download $G3_URL"; rm -f "$f"; return 1
+  fi
+  if [ "$(openssl x509 -inform DER -in "$f" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)" != "$G3_SHA256" ]; then
+    log "  the download is not Apple's G3 certificate: nothing added"; rm -f "$f"; return 1
+  fi
+  security add-certificates -k "$HOME/Library/Keychains/login.keychain-db" "$f" 2>/dev/null || true
+  rm -f "$f"
+  log "  added Apple's G3 certificate to the login keychain"
+}
+VALID_ID="$(security find-identity -p codesigning -v 2>/dev/null | awk '/"Apple Development: / && !x {print $2; x=1}' || true)"
+ANY_ID="$(security find-identity -p codesigning 2>/dev/null | awk '/"Apple Development: / && !x {print $2; x=1}' || true)"
+if [ -n "$VALID_ID" ] && try_sign "$VALID_ID"; then
+  SIGN_ID="$VALID_ID"
+elif [ -n "$ANY_ID" ] && try_sign "$ANY_ID"; then
+  SIGN_ID="$ANY_ID"
+elif [ -n "$ANY_ID" ] && printf '%s' "$SIGN_ERR" | grep -q "unable to build chain"; then
+  log "NOTE: your Apple Development certificate cannot sign: this Mac lacks"
+  log "  Apple's intermediate certificate (WWDR G3) that issued it."
+  if [ -t 0 ] && [ -t 1 ]; then
+    ans=""
+    read -r -p "==> Add Apple's G3 certificate to your login keychain now? [y/N] " ans || true
+    case "$ans" in
+      [yY]*) if add_g3 && try_sign "$ANY_ID"; then SIGN_ID="$ANY_ID"; fi ;;
+    esac
+  fi
+  [ -n "$SIGN_ID" ] || SIGN_WARN="your Apple Development certificate cannot sign: Apple's G3 certificate is missing."
+elif [ -n "$ANY_ID" ]; then
+  SIGN_WARN="your Apple Development certificate cannot sign ($(printf '%s' "$SIGN_ERR" | tail -1))."
+else
+  SIGN_WARN="no Apple Development certificate signs omacosy on this Mac."
+fi
+sign() { # <path> <identifier> [codesign options]
+  [ -n "$SIGN_ID" ] || return 0
+  local path=$1 id=$2
+  shift 2
+  codesign -f -s "$SIGN_ID" --identifier "$id" "$@" "$path" 2>/dev/null \
+    || log "WARNING: could not sign $path"
+}
+
+# A bundle whose signing rule changed has grants macOS no longer matches,
+# and they block the new build silently. tccutil can clear a bundle's
+# entries (not a plain program's), so the rule is compared before and
+# after each build, and a changed one is cleared before it launches.
+REGRANT=""
+DR_DIR="$(mktemp -d)"
+signing_rule() { codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p' || true; }
+for b in omacosy-bar omacosy-gesture omacosy-ffm; do
+  signing_rule "$HOME/.local/share/omacosy/$b.app" > "$DR_DIR/$b"
+done
+clear_if_changed() { # <bundle name> <identifier>
+  local before after
+  before="$(cat "$DR_DIR/$1" 2>/dev/null || true)"
+  after="$(signing_rule "$HOME/.local/share/omacosy/$1.app")"
+  [ "$before" = "$after" ] && return 0
+  [ -n "$before" ] && { tccutil reset All "$2" >/dev/null 2>&1 || true; }
+  REGRANT="$REGRANT $1"
+}
+
 # tiny compiled helper (cursor position, wallpaper) — replaces the
 # cliclick and desktoppr dependencies; swiftc ships with the CLT that
 # Homebrew already requires
@@ -393,11 +477,28 @@ launchctl unload "$HOME/Library/LaunchAgents/com.omacosy.dwindle.plist" 2>/dev/n
 rm -f "$HOME/Library/LaunchAgents/com.omacosy.dwindle.plist" "$HOME/.local/bin/omacosy-dwindle"
 
 # focus-follows-mouse daemon (own binary so helper rebuilds never
-# invalidate its Accessibility grant); runs as a launchd agent
-if [ ! -x "$HOME/.local/bin/omacosy-ffm" ] || [ "$REPO_DIR/helper/ffm.swift" -nt "$HOME/.local/bin/omacosy-ffm" ]; then
+# invalidate its Accessibility grant); runs as a launchd agent. It ships in
+# a minimal .app: a bundle gets its own grant, and tccutil can clear a
+# bundle's grants when its signature changes. ~/.local/bin keeps a link.
+FFM_APP="$HOME/.local/share/omacosy/omacosy-ffm.app"
+FFM_BIN="$FFM_APP/Contents/MacOS/omacosy-ffm"
+if [ ! -x "$FFM_BIN" ] || [ "$REPO_DIR/helper/ffm.swift" -nt "$FFM_BIN" ]; then
   log "Building omacosy-ffm (grant Accessibility when prompted)"
-  swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight -o "$HOME/.local/bin/omacosy-ffm" "$REPO_DIR/helper/ffm.swift"
+  mkdir -p "$FFM_APP/Contents/MacOS"
+  swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight -o "$FFM_BIN" "$REPO_DIR/helper/ffm.swift"
 fi
+cat > "$FFM_APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.omacosy.ffm</string>
+  <key>CFBundleExecutable</key><string>omacosy-ffm</string>
+  <key>CFBundleName</key><string>omacosy-ffm</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+ln -sfn "$FFM_BIN" "$HOME/.local/bin/omacosy-ffm"
 
 # focused-window border ring (replaces JankyBorders; no permissions;
 # SkyLight for the window-server event notifications)
@@ -406,22 +507,16 @@ if [ ! -x "$HOME/.local/bin/omacosy-borders" ] || [ "$REPO_DIR/helper/borders.sw
   swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight -o "$HOME/.local/bin/omacosy-borders" "$REPO_DIR/helper/borders.swift"
 fi
 # stable code identity so TCC grants survive rebuilds (skipped when no
-# signing identity is present — then re-grant after each rebuild)
-if security find-identity -p codesigning -v 2>/dev/null | grep -q "Apple Development"; then
-  codesign -f -s "Apple Development" --identifier com.omacosy.helper "$HOME/.local/bin/omacosy-helper" 2>/dev/null || true
-  codesign -f -s "Apple Development" --identifier com.omacosy.ffm "$HOME/.local/bin/omacosy-ffm" 2>/dev/null || true
-  codesign -f -s "Apple Development" --identifier com.omacosy.borders "$HOME/.local/bin/omacosy-borders" 2>/dev/null || true
-  # the BUNDLE is signed now; the identifier is what grants key on
-  codesign -f -s "Apple Development" --identifier com.omacosy.bar "$BAR_APP" 2>/dev/null || true
-  codesign -f -s "Apple Development" --identifier com.omacosy.overview "$HOME/.local/bin/omacosy-overview" 2>/dev/null || true
-else
-  log "NOTE: no Apple Development signing identity found."
-  log "  macOS ties permission grants to the binary's signature — without a"
-  log "  stable identity, every rebuild (each install.sh re-run) invalidates"
-  log "  the Accessibility/Bluetooth grants and you must re-add them in"
-  log "  System Settings > Privacy & Security. Free fix: Xcode > Settings >"
-  log "  Accounts > Manage Certificates > + > Apple Development, then re-run."
-fi
+# signing identity works — then re-grant after each rebuild)
+sign "$HOME/.local/bin/omacosy-helper" com.omacosy.helper
+sign "$HOME/.local/bin/omacosy-borders" com.omacosy.borders
+sign "$HOME/.local/bin/omacosy-overview" com.omacosy.overview
+# the BUNDLES are signed; the identifier is what grants key on
+sign "$BAR_APP" com.omacosy.bar
+sign "$FFM_APP" com.omacosy.ffm
+[ -n "$SIGN_ID" ] || codesign -f -s - "$FFM_APP" 2>/dev/null || true
+clear_if_changed omacosy-bar com.omacosy.bar
+clear_if_changed omacosy-ffm com.omacosy.ffm
 # (omacosy-gesture is signed in section 5, right after its build —
 # the makefile re-signs ad-hoc as part of the build, so signing here
 # would be overwritten and every rebuild would invalidate the
@@ -571,12 +666,10 @@ fi
 if grep -qxF "cloned-aerospace-swipe" "$MANIFEST" 2>/dev/null && [ -d "$HOME/.local/share/aerospace-swipe" ]; then
   rm -rf "$HOME/.local/share/aerospace-swipe" "$HOME/.config/aerospace-swipe"
 fi
-# Rebuilding this daemon COSTS ITS ACCESSIBILITY GRANT: measured on
-# macOS 26.3, TCC pins the grant to the exact build (any re-sign is a
-# new subject — a stable Apple Development identity does not carry it),
-# so every rebuild means dead swipes until the user re-grants. The only
-# safe rebuild is the one that does not happen: skip the whole block
-# unless the binary is missing or a source file actually changed.
+# Rebuilding this daemon cost its Accessibility grant on macOS 26.3, with
+# or without an identity. On macOS 27.2 a build signed with an Apple
+# Development identity kept it (measured twice). The block still runs
+# only when the binary is missing or a source file changed.
 # omacosy-omni: the scripts' held-socket client for OmniWM (plain C,
 # ~3 ms launch; no grants involved, so it is simply rebuilt when stale)
 G="$REPO_DIR/helper/gesture"
@@ -601,15 +694,14 @@ if [ -n "$GESTURE_STALE" ]; then
     || echo "omacosy-gesture build failed"
   cp "$G/gesture-info.plist" "$GESTURE_APP/Contents/Info.plist"
   echo "APPL????" > "$GESTURE_APP/Contents/PkgInfo"
-  # sign BEFORE anything launches: the only binary launchd ever starts
-  # is the one the user grants
-  if security find-identity -p codesigning -v 2>/dev/null | grep -q "Apple Development"; then
-    codesign -f -s "Apple Development" --identifier com.omacosy.gesture \
-      --entitlements "$G/accessibility.entitlements" "$GESTURE_APP" 2>/dev/null || true
-  else
-    codesign -f --entitlements "$G/accessibility.entitlements" --sign - "$GESTURE_APP" 2>/dev/null || true
-  fi
+  # without an identity, ad hoc and only here: an ad hoc signature of an
+  # unchanged build is the same, so a re-run keeps the grant
+  [ -n "$SIGN_ID" ] || codesign -f --entitlements "$G/accessibility.entitlements" --sign - "$GESTURE_APP" 2>/dev/null || true
 fi
+# sign BEFORE anything launches: the only binary launchd ever starts is the
+# one the user grants. With an identity, at every run, like the others.
+sign "$GESTURE_APP" com.omacosy.gesture --entitlements "$REPO_DIR/helper/gesture/accessibility.entitlements"
+clear_if_changed omacosy-gesture com.omacosy.gesture
 cat > "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -629,10 +721,23 @@ launchctl load "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist" 2>/dev/nul
 # a rebuild strands the daemon in its permission-wait loop with no
 # visible symptom but dead swipes — check and say so out loud
 sleep 2
-if tail -5 /tmp/omacosy-gesture.log 2>/dev/null | grep -q "Waiting for accessibility"; then
-  log "WARNING: omacosy-gesture is waiting for its Accessibility grant"
-  log "  (a rebuild makes macOS treat it as a new app — this is a macOS rule, not a bug)."
-  log "  Fix: System Settings -> Privacy & Security -> Accessibility -> toggle omacosy-gesture"
+# (when the list below names omacosy-gesture, that list says what to do)
+if tail -5 /tmp/omacosy-gesture.log 2>/dev/null | grep -q "Waiting for accessibility" \
+   && case " $REGRANT " in *" omacosy-gesture "*) false ;; *) true ;; esac; then
+  log "WARNING: omacosy-gesture is waiting for its Accessibility grant."
+  log "  Switching its entry off and on does not help: quit System Settings,"
+  log "  reopen Privacy & Security -> Accessibility, remove omacosy-gesture"
+  log "  with the - button, then add it again with +."
+fi
+rm -rf "$DR_DIR"
+if [ -n "$REGRANT" ]; then
+  log "New to macOS, or signed differently:$REGRANT"
+  log "  Their old permission entries were removed. Quit System Settings first"
+  log "  if it is open: an open window keeps showing the removed entries."
+  log "  Then grant them when macOS asks (Privacy & Security):"
+  log "  omacosy-gesture: Accessibility, Input Monitoring, Screen Recording"
+  log "  (for the overview); omacosy-ffm and omacosy-bar: Accessibility."
+  log "  An older plain omacosy-ffm entry may stay: remove it with the - button."
 fi
 
 # --- 6. macOS look ----------------------------------------------------------
@@ -700,3 +805,19 @@ Done. One-time macOS steps if this is a fresh machine:
 Super = hold Caps Lock. Switch themes:  theme-set <name>  or  Super+Shift+T
 Back to a normal Mac any time:  ./uninstall.sh
 EOF
+
+# Last, where it is seen: the install never stops for a missing
+# certificate, and one added later is picked up by the next install.
+if [ -n "$SIGN_WARN" ]; then
+  doc="$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)"
+  doc="${doc%.git}"
+  doc="${doc/git@github.com:/https://github.com/}"
+  case "$doc" in
+    https://github.com/*) doc="$doc#keep-your-permissions-across-updates" ;;
+    *) doc="README.md, section \"Keep your permissions across updates\"" ;;
+  esac
+  echo
+  log "WARNING: $SIGN_WARN"
+  log "  macOS asks again for omacosy's permissions after each update."
+  log "  Add a certificate, before or after this install: $doc"
+fi

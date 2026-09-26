@@ -2443,12 +2443,37 @@ func appIcon(_ name: String) -> NSImage? {
     return icon
 }
 
-let barHeight: CGFloat = 34
+// The bar owns the menu-bar strip, so it is as tall as the strip macOS
+// draws rather than a number tuned to one release — Tahoe changed the
+// height and it can change again. NSMenu.menuBarHeight keeps reporting
+// it while the native bar is auto-hidden, which is the state
+// macos-defaults.sh puts it in and where visibleFrame and
+// safeAreaInsets both read 0. It needs a main menu to read from, and an
+// .accessory app never displays one. Top-level code runs in order, so
+// the menu is set here rather than with the app setup further down.
+NSApplication.shared.mainMenu = NSMenu()
+let barHeight: CGFloat = NSApplication.shared.mainMenu?.menuBarHeight ?? 34
+
+// Heights inside the bar follow it instead of being tuned to it, so a
+// release that moves the strip does not leave them adrift. The offsets
+// are the ones the fixed values had at a 34 point bar, so a machine
+// reporting 34 draws exactly what it draws today. Widths are unrelated
+// to the strip and stay fixed.
 let padLeft: CGFloat = 10
 let chipBox: CGFloat = 20
 let chipPad: CGFloat = 2
-let pillHeight: CGFloat = 26
-let chipPillHeight: CGFloat = 20
+let pillHeight: CGFloat = barHeight - 8
+// The workspace chip is a SQUARE, which is what a 20x20 chipBox and a
+// 20 chipPillHeight meant at the shipped bar height. Deriving the height
+// from barHeight alone turned it into a rectangle on any shorter bar and
+// shrank the icon with it. Track chipBox instead, and only give way when
+// the bracket is too short to hold it.
+let chipPillHeight: CGFloat = min(chipBox, pillHeight - 2)
+let chipIcon: CGFloat = chipPillHeight - 2
+// A 4 point radius on a 20 point square reads as a rounded rectangle.
+// Roughly a quarter of the side is what makes it read as a rounded
+// square, which is the shape an app icon already is.
+let chipRadius: CGFloat = chipPillHeight * 0.28
 let radius: CGFloat = 4
 let gap: CGFloat = 14
 
@@ -2589,17 +2614,19 @@ final class BarView: NSView {
                 let pill = NSRect(x: box.minX, y: (barHeight - chipPillHeight) / 2,
                                   width: chipBox, height: chipPillHeight)
                 palette.accent.setFill()
-                NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius).fill()
+                NSBezierPath(roundedRect: pill, xRadius: chipRadius, yRadius: chipRadius).fill()
             }
             let tint: NSColor = ws == surface.visible ? palette.barBG : palette.muted
             switch workspaceIconConfig.icon(for: ws) {
             case .some(.glyph(let glyph)):
                 drawIcon(glyph, iconFont, tint, centeredIn: box)
             case .some(.image(let icon)):
-                icon.draw(in: NSRect(x: box.midX - 9, y: barHeight / 2 - 9, width: 18, height: 18))
+                icon.draw(in: NSRect(x: box.midX - chipIcon / 2, y: (barHeight - chipIcon) / 2,
+                                     width: chipIcon, height: chipIcon))
             case .some(.unavailable), .none:
                 if let app = model.soleApp[ws], let icon = appIcon(app) {
-                    icon.draw(in: NSRect(x: box.midX - 9, y: barHeight / 2 - 9, width: 18, height: 18))
+                    icon.draw(in: NSRect(x: box.midX - chipIcon / 2, y: (barHeight - chipIcon) / 2,
+                                         width: chipIcon, height: chipIcon))
                 } else {
                     draw(String(ws.suffix(1)), chipFont, tint, centeredIn: box)
                 }

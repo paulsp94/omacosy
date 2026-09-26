@@ -3408,8 +3408,8 @@ func resyncIfGained() {
 // AeroSpace parks workspaces 11-19 on the one display, and omacosy-ws
 // only ever matches single-digit slots — so anything left on a guest
 // workspace is unreachable by Super+N or Super+Tab until a display
-// comes back. omacosy-ws-collapse moves those windows into the empty
-// 1-9 slots and remembers where they came from.
+// comes back. omacosy-ws-collapse moves those windows into
+// 1-9 and remembers where they came from.
 //
 // It used to be driven by sketchybar's display_change.sh, which went
 // out with sketchybar; nothing has called it since, so the first undock
@@ -3438,20 +3438,24 @@ NotificationCenter.default.addObserver(
         reconcile("screens")
         let now = NSScreen.screens.count
         guard now != monitorCount else { return }
-        let wasSingle = monitorCount == 1
         monitorCount = now
-        let op = now == 1 ? "collapse" : (wasSingle ? "restore" : "")
-        guard !op.isEmpty else { return }
-        // both WMs: OmniWM re-routes guest WORKSPACES on unplug but
-        // strands their windows "after 9" — ws-collapse has an omniwm
-        // branch that folds and restores them through omacosy-omni
-        tlog("displays: \(now) — running ws-collapse \(op)")
-        // off-main: it shells out to aerospace per window, and restore
-        // deliberately sleeps while aerospace re-adopts the monitor
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = shell("\(NSHomeDirectory())/.local/bin/omacosy-ws-collapse", [op])
-            DispatchQueue.main.async { kickRebuild() }
-        }
+        syncWorkspaceFold("displays: \(now)")
+    }
+}
+
+// Fold or unfold to match the screens there are now. ws-collapse waits
+// for the WM to agree on the count and does nothing when nothing is out
+// of place, so calling it more often than needed costs nothing — and a
+// call that raced the WM, or landed mid-sleep, is caught by the next.
+// both WMs: OmniWM re-routes guest WORKSPACES on unplug but strands
+// their windows "after 9"; ws-collapse folds them into 1-9.
+func syncWorkspaceFold(_ why: String) {
+    let n = NSScreen.screens.count
+    tlog("\(why) — running ws-collapse sync \(n)")
+    // off-main: it waits for the WM (up to 30 s) and moves window by window
+    DispatchQueue.global(qos: .userInitiated).async {
+        _ = shell("\(NSHomeDirectory())/.local/bin/omacosy-ws-collapse", ["sync", "\(n)"])
+        DispatchQueue.main.async { kickRebuild() }
     }
 }
 
@@ -3678,10 +3682,19 @@ locationGate.start()
 // bluetooth: gated on the privacy grant, which the watcher above also needs
 bluetoothWatcher.start()
 
-// waking clears the gamma table, so the shade has to be reasserted
+// waking clears the gamma table, so the shade has to be reasserted.
+// A monitor unplugged or replugged while asleep is the case the screen
+// notification handles worst: it fires at wake while the WM still holds
+// the old layout. Sync after every wake, once the screens have settled.
 NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-) { _ in applyShade() }
+) { _ in
+    applyShade()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        monitorCount = NSScreen.screens.count
+        syncWorkspaceFold("wake")
+    }
+}
 
 // media: Spotify broadcasts every state change itself, and the payload
 // already carries the track — so the pill repaints without asking anyone

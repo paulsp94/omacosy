@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Build matched AeroSpace app/CLI artifacts without restarting the desktop."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+
+ROOT = Path(__file__).resolve().parent.parent
+PATCH_DIR = ROOT / "patches/aerospace"
+APP_ID = "bobko.aerospace"
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def run(args, **kwargs):
+    return subprocess.run(list(map(str, args)), check=True, text=True,
+                          capture_output=True, **kwargs)
+
+
+def signing_identity(value=None):
+    path = Path.home() / ".config/omacosy/signing-identity"
+    value = (value or path.read_text()).strip().upper()
+    if not re.fullmatch(r"[0-9A-F]{40}", value):
+        raise ValueError("Use an existing signing certificate SHA-1 fingerprint")
+    if value not in run(["security", "find-identity", "-v", "-p", "codesigning"]).stdout.upper():
+        raise ValueError("Signing identity unavailable; no replacement or ad-hoc fallback")
+    return value
+
+
+def verify_signature(app, identity):
+    if not re.fullmatch(r"[0-9A-Fa-f]{40}", identity):
+        raise ValueError("Invalid signing identity in release manifest")
+    requirement = f'identifier "{APP_ID}" and certificate leaf = H"{identity}"'
+    run(["codesign", "--verify", "--deep", "--strict", "-R", "=" + requirement, app])
+
+
+def executable(app):
+    with (app / "Contents/Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    if info["CFBundleIdentifier"] != APP_ID:
+        raise ValueError("Unexpected application identifier")
+    return app / "Contents/MacOS" / info["CFBundleExecutable"]
+
+
+def app_version(app):
+    # Exits before Accessibility, configuration, or socket startup.
+    return run([executable(app), "--version"]).stdout.strip()
+
+
+def verify_release(directory):
+    metadata = json.loads((directory / "release.json").read_text())
+    app = directory / "AeroSpace.app"
+    verify_signature(app, metadata["signing_identity"])
+    if digest(executable(app)) != metadata["app_sha256"]:
+        raise ValueError("Application does not match the release manifest")
+    if digest(directory / "aerospace") != metadata["cli_sha256"]:
+        raise ValueError("CLI does not match the release manifest")
+    if app_version(app) != metadata["version"]:
+        raise ValueError("Application version does not match the release manifest")
+    return metadata
+
+
+def build(args):
+    if args.output.exists():
+        raise ValueError("Output already exists; choose a new release directory")
+    identity = signing_identity(args.identity)
+    spec = json.loads((PATCH_DIR / "release.json").read_text())
+    patch = PATCH_DIR / "focus-stability.patch"
+    if digest(patch) != spec["patch_sha256"]:
+        raise ValueError("Patch checksum differs from release specification")
+    with (args.base_app / "Contents/Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    if info.get("CFBundleIdentifier") != APP_ID or info.get("CFBundleShortVersionString") != spec["base_version"]:
+        raise ValueError("Base application bundle must match the pinned upstream version")
+    with tempfile.TemporaryDirectory(prefix="omacosy-aerospace-",
+                                     dir=os.environ.get("OWNED_TEMP_DIR")) as temporary:
+        root = Path(temporary)
+        build_dir = root / "build"
+        build_dir.mkdir()
+        guardian = shutil.which("disk-guardian-artifacts")
+        owner = f"omacosy-aerospace-release-{os.getpid()}"
+        registered = False
+        try:
+            if guardian:
+                run([guardian, "register", build_dir, "--owner", owner,
+                     "--owner-pid", os.getpid(), "--kind", "build", "--grace-hours", "24"])
+                registered = True
+            archive = root / "source.tar.gz"
+            if args.archive:
+                shutil.copy2(args.archive, archive)
+            else:
+                url = "https://codeload.github.com/nikitabobko/AeroSpace/tar.gz/" + spec["source_commit"]
+                with urllib.request.urlopen(url, timeout=60) as response, archive.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+            if digest(archive) != spec["source_sha256"]:
+                raise ValueError("Source archive checksum differs from release specification")
+            with tarfile.open(archive) as source:
+                source.extractall(root, filter="data")
+            source = root / ("AeroSpace-" + spec["source_commit"])
+            # Upstream tests locate fixtures using this marker; not a Git init.
+            (source / ".git").touch()
+            run(["patch", "-p1", "-F", "0", "-i", patch], cwd=source)
+            bash = next((p for p in (Path("/opt/homebrew/bin/bash"), Path("/usr/local/bin/bash"))
+                         if p.is_file()), Path(shutil.which("bash") or "/bin/bash"))
+            if int(run([bash, "-c", 'echo "$BASH_VERSION"']).stdout.strip().split(".")[0]) < 4:
+                raise ValueError("Upstream generation requires Bash 4 or newer")
+            run([bash, "./generate.sh", "--ignore-xcodeproj", "--build-version",
+                 spec["build_version"]], cwd=source)
+            environment = os.environ.copy()
+            environment["CLANG_MODULE_CACHE_PATH"] = str(build_dir / "clang")
+            environment["SWIFTPM_MODULECACHE_OVERRIDE"] = str(build_dir / "modulecache")
+            options = ["--scratch-path", build_dir / "scratch", "--cache-path",
+                       build_dir / "cache", "--jobs", args.jobs]
+            logs = {}
+            for label, command in (
+                ("tests", ["swift", "test", *options]),
+                ("app-build", ["swift", "build", "-c", "release", "--product", "AeroSpaceApp", *options]),
+                ("cli-build", ["swift", "build", "-c", "release", "--product", "aerospace", *options]),
+            ):
+                print(label + "...", flush=True)
+                result = run(command, cwd=source, env=environment, timeout=600)
+                logs[label] = result.stdout + result.stderr
+            stage = root / "release"
+            stage.mkdir()
+            app = stage / "AeroSpace.app"
+            shutil.copytree(args.base_app, app, symlinks=True)
+            shutil.copy2(build_dir / "scratch/release/AeroSpaceApp", executable(app))
+            shutil.copy2(build_dir / "scratch/release/aerospace", stage / "aerospace")
+            run(["codesign", "--force", "--deep", "--sign", identity, "--timestamp=none", app])
+            verify_signature(app, identity)
+            metadata = dict(spec, signing_identity=identity, version=app_version(app),
+                            app_sha256=digest(executable(app)), cli_sha256=digest(stage / "aerospace"))
+            (stage / "release.json").write_text(json.dumps(metadata, indent=2) + "\n")
+            for label, content in logs.items():
+                (stage / (label + ".log")).write_text(content)
+            for name in ("LICENSE", "LICENSE.md"):
+                if (source / name).is_file():
+                    shutil.copy2(source / name, stage / "UPSTREAM-LICENSE")
+                    break
+            verify_release(stage)
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copytree(stage, args.output)
+            except BaseException:
+                shutil.rmtree(args.output, ignore_errors=True)
+                raise
+            print("Built and verified:", args.output)
+            print("Nothing installed or restarted.")
+        finally:
+            if registered:
+                run([guardian, "release", build_dir, "--owner", owner])
+                run([guardian, "cleanup", "--only", build_dir, "--no-caches", "--apply"])
+
+
+def protect(args):
+    if args.app.resolve() != Path("/Applications/AeroSpace.app"):
+        raise ValueError("Managed AeroSpace must use /Applications/AeroSpace.app")
+    identity = signing_identity(args.identity)
+    verify_signature(args.app, identity)
+    marker = Path.home() / ".config/omacosy/aerospace-managed.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    metadata = dict(app=str(args.app.resolve()), signing_identity=identity,
+                    version=app_version(args.app), app_sha256=digest(executable(args.app)))
+    if marker.exists() and json.loads(marker.read_text())["signing_identity"] != identity:
+        raise ValueError("Managed identity changed; refusing implicit signer rotation")
+    marker.write_text(json.dumps(metadata, indent=2) + "\n")
+    print("Omacosy Brewfile will preserve the managed app:", args.app)
+
+
+def install_cli(args):
+    release = verify_release(args.release)
+    verify_signature(args.app, release["signing_identity"])
+    if app_version(args.app) != release["version"]:
+        raise ValueError("Installed app and release CLI versions differ; refusing replacement")
+    target = args.cli.resolve(strict=True)
+    if digest(target) == release["cli_sha256"]:
+        print("Matching CLI already installed.")
+        return
+    backup = Path.home() / ".local/state/omacosy/aerospace-cli-backups" / digest(target)
+    backup.mkdir(parents=True, exist_ok=True)
+    if not (backup / "aerospace").exists():
+        shutil.copy2(target, backup / "aerospace")
+    (backup / "OWNER.txt").write_text("Omacosy managed CLI rollback; remove this exact directory after release acceptance.\n")
+    # Rename over resolved target, retaining the existing Homebrew symlink.
+    descriptor, name = tempfile.mkstemp(prefix=".omacosy-aerospace-", dir=target.parent)
+    os.close(descriptor)
+    temporary = Path(name)
+    try:
+        shutil.copy2(args.release / "aerospace", temporary)
+        if digest(temporary) != release["cli_sha256"]:
+            raise ValueError("Staged CLI checksum mismatch")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print("Installed matching CLI; rollback:", backup)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    build_parser = commands.add_parser("build")
+    build_parser.add_argument("--output", type=Path, required=True)
+    build_parser.add_argument("--base-app", type=Path, default=Path("/Applications/AeroSpace.app"))
+    build_parser.add_argument("--identity")
+    build_parser.add_argument("--archive", type=Path)
+    build_parser.add_argument("--jobs", type=int, default=4)
+    verify_parser = commands.add_parser("verify")
+    verify_parser.add_argument("release", type=Path)
+    protect_parser = commands.add_parser("protect")
+    protect_parser.add_argument("--app", type=Path, default=Path("/Applications/AeroSpace.app"))
+    protect_parser.add_argument("--identity")
+    cli_parser = commands.add_parser("install-cli")
+    cli_parser.add_argument("release", type=Path)
+    cli_parser.add_argument("--app", type=Path, default=Path("/Applications/AeroSpace.app"))
+    cli_parser.add_argument("--cli", type=Path, required=True)
+    args = parser.parse_args()
+    if args.command == "build":
+        if args.jobs < 1:
+            parser.error("--jobs must be positive")
+        build(args)
+    elif args.command == "verify":
+        print(json.dumps(verify_release(args.release), indent=2))
+    elif args.command == "protect":
+        protect(args)
+    else:
+        install_cli(args)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        print(error.stdout or "", file=sys.stderr)
+        print(error.stderr or "", file=sys.stderr)
+        sys.exit(error.returncode or 1)
+    except (OSError, ValueError, KeyError) as error:
+        sys.exit(str(error))

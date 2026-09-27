@@ -1,0 +1,89 @@
+--- a/Sources/AppBundle/getNativeFocusedWindow.swift
++++ b/Sources/AppBundle/getNativeFocusedWindow.swift
+@@ -21,5 +21,15 @@
+ 
+ @MainActor
+ func getNativeFocusedWindow(_ cm: CancellationMode) async throws -> Window? {
+-    try await focusedApp?.getFocusedWindow(cm)
++    let initial = try await focusedApp?.getFocusedWindow(cm)
++    guard initial?.nodeWorkspace?.isVisible == false else { return initial }
++    // Application activation can expose its previous key window before the
++    // requested key-window event is delivered. Do not reveal a hidden workspace
++    // from that intermediate value. Re-read the app as well as its window.
++    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
++        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
++            continuation.resume()
++        }
++    }
++    return try await focusedApp?.getFocusedWindow(cm)
+ }
+--- /dev/null
++++ b/Sources/AppBundleTests/NativeFocusStabilityTest.swift
+@@ -0,0 +1,45 @@
++@testable import AppBundle
++import Common
++import XCTest
++
++@MainActor
++final class NativeFocusStabilityTest: XCTestCase {
++    override func setUp() async throws { setUpWorkspacesForTests() }
++
++    func testTransientHiddenWindowDoesNotBecomeTheFocusResult() async throws {
++        let visible = Workspace.get(byName: "visible")
++        let hidden = Workspace.get(byName: "hidden")
++        _ = visible.focusWorkspace()
++        let old = TestWindow.new(id: 8101, parent: hidden.rootTilingContainer)
++        let requested = TestWindow.new(id: 8102, parent: visible.rootTilingContainer)
++        old.nativeFocus()
++        XCTAssertFalse(hidden.isVisible)
++        let transition = Task { @MainActor in
++            try await Task.sleep(for: .milliseconds(20))
++            requested.nativeFocus()
++        }
++        let result = try await getNativeFocusedWindow(.cancellable)
++        try await transition.value
++        XCTAssertEqual(result?.windowId, requested.windowId)
++        XCTAssertFalse(hidden.isVisible)
++    }
++
++    func testIntentionalHiddenWindowActivationStillWorks() async throws {
++        let visible = Workspace.get(byName: "visible")
++        let hidden = Workspace.get(byName: "hidden")
++        _ = visible.focusWorkspace()
++        let requested = TestWindow.new(id: 8103, parent: hidden.rootTilingContainer)
++        requested.nativeFocus()
++        let result = try await getNativeFocusedWindow(.cancellable)
++        XCTAssertEqual(result?.windowId, requested.windowId)
++    }
++
++    func testVisibleWindowIsReadWithoutWaitingForAnotherActivation() async throws {
++        let visible = Workspace.get(byName: "visible")
++        _ = visible.focusWorkspace()
++        let requested = TestWindow.new(id: 8104, parent: visible.rootTilingContainer)
++        requested.nativeFocus()
++        let result = try await getNativeFocusedWindow(.cancellable)
++        XCTAssertEqual(result?.windowId, requested.windowId)
++    }
++}
+--- a/Sources/AppBundle/initAppBundle.swift
++++ b/Sources/AppBundle/initAppBundle.swift
+@@ -1,4 +1,5 @@
+ import AppKit
++import ApplicationServices
+ import Common
+ import Foundation
+ 
+@@ -95,6 +96,13 @@
+                     case nil: exit(EXIT_CODE_TWO, err: "Missing <path> in --config-path flag")
+                 }
+                 index += 1
++            case "--check-accessibility", "--request-accessibility":
++                // This diagnostic path exits before config loading or manager startup.
++                // Request permission without resetting any existing TCC authorization.
++                let prompt = current == "--request-accessibility"
++                let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": prompt] as CFDictionary)
++                print(trusted ? "trusted" : "not-trusted")
++                Darwin.exit(trusted ? 0 : 1)
+             case "--read-only": // todo rename to '--disabled' and unite with disabled feature
+                 unsafe _serverArgs.isReadOnly = true
+             case "-NSDocumentRevisionsDebugMode" where isDebug:

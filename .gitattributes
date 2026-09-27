@@ -1,0 +1,3 @@
+
+# Unified patches contain space-prefixed blank context lines.
+patches/aerospace/*.patch -whitespace

@@ -8,7 +8,14 @@ if wm == "omniwm"
   cask "omniwm"
 else
   tap "nikitabobko/tap"
-  cask "aerospace"
+  # A locally signed release has its own reviewed update path. Replacing it
+  # here would discard both its patches and its Accessibility identity.
+  managed = File.file?(File.expand_path("~/.config/omacosy/aerospace-managed.json"))
+  if managed && File.directory?("/Applications/AeroSpace.app")
+    warn "Keeping managed AeroSpace; see docs/aerospace-release.md for updates."
+  else
+    cask "aerospace"
+  end
 end
 
 # Window management + bar + borders

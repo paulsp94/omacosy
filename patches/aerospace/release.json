@@ -1,0 +1,7 @@
+{
+  "source_commit": "d56e1637c3a1ed660d0cadd7534e94fb3218d1c3",
+  "source_sha256": "d51d9c59564e47e7c06300d410680e7eac6f0e6bf5294c9a11e9b3615b1acaa8",
+  "base_version": "0.21.3-Beta",
+  "build_version": "0.21.3-Beta-omacosy-focus-candidate",
+  "patch_sha256": "af173e17677dc941a1d0a0474a428f4d53677b3edc58c1604df0ca1ef56c8ee6"
+}

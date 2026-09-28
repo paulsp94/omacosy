@@ -22,6 +22,7 @@ export PATH="/opt/homebrew/bin:$PATH"
 # process for 31 ms per call, and a stale socket after a crash cannot
 # fool a real request the way a file test could
 wm_is_omniwm() { "$HOME/.local/bin/omacosy-omni" active >/dev/null 2>&1; }
+wm_is_aerospace() { aerospace list-workspaces --focused >/dev/null 2>&1; }
 
 STATE_DIR="$HOME/.local/state/omacosy"
 MAP="$STATE_DIR/collapse-map"
@@ -153,7 +154,14 @@ for line in open(sys.argv[1]):
   exit 0
 fi
 
-# AeroSpace: unchanged, the bar's sync maps onto the old verbs
+# AeroSpace: unchanged, the bar's sync maps onto the old verbs. A
+# display change is also when a manager restarts, so if neither answers
+# there is nothing to talk to: keep the map for the next sync instead of
+# consuming it against a manager that is not there.
+if ! wm_is_aerospace; then
+  log "sync $WANT: no window manager answered; map kept"
+  exit 0
+fi
 case "$([ "$WANT" = 1 ] && echo collapse || echo restore)" in
   collapse)
     [ "$(aerospace list-monitors 2>/dev/null | wc -l | tr -d ' ')" = 1 ] || exit 0
@@ -197,11 +205,18 @@ case "$([ "$WANT" = 1 ] && echo collapse || echo restore)" in
     # let aerospace finish adopting the reattached monitor (its
     # force-assignment moves the guest workspaces back first)
     sleep 1
+    : >"$MAP.next"
     while IFS=$'\t' read -r wid gws _; do
       [ -n "$wid" ] && [ -n "$gws" ] || continue
-      aerospace move-node-to-workspace --window-id "$wid" "$gws" 2>/dev/null &&
+      if aerospace move-node-to-workspace --window-id "$wid" "$gws" 2>/dev/null; then
         echo "$(date '+%F %T') restored $wid -> $gws" >>/tmp/omacosy-ws-collapse.log
+      else
+        # kept: the next sync (wake, replug) tries again
+        printf '%s\t%s\n' "$wid" "$gws" >>"$MAP.next"
+        log "restore: $wid -> $gws refused, kept for the next sync"
+      fi
     done <"$MAP.run"
+    mv "$MAP.next" "$MAP"
     rm -f "$MAP.run"
     : > /tmp/omacosy-bar-moved
     ;;

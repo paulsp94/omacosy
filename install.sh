@@ -325,6 +325,16 @@ if [ -f "$HOME/.config/karabiner/karabiner.json" ] \
 fi
 cp "$REPO_DIR/config/karabiner/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
 launchctl kickstart -k "gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server" 2>/dev/null || true
+# the copy above reset the file to the seed, which has only the Caps Lock
+# rule: every chord that RUNS something (terminal, launcher, theme, lock)
+# lives in the injected OmniWM layer. Re-add it right here, so a later
+# failure — a build, or the update killed mid-run — cannot leave the
+# keyboard without its exec chords. The OmniWM handover near the end runs
+# this again, which also keeps the rules in step with a changed apps.conf.
+if [ "$WM" = omniwm ]; then
+  "$REPO_DIR/bin/omacosy-karabiner-omniwm" install >/dev/null 2>&1 \
+    || log "WARNING: could not restore the OmniWM chords; run: omacosy-karabiner-omniwm install"
+fi
 # Karabiner's Menu and NotificationWindow helpers are disabled the
 # SUPPORTED way in karabiner.json (global.show_in_menu_bar and
 # global.enable_notification_window, both false) — the bootout below

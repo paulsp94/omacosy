@@ -61,16 +61,18 @@ grant-first, snapshot-backed and auto-reverting.
   the settings file had been right all along.
 - **Swipe feel**: one-switch-per-swipe by design, less smooth than
   aerospace-swipe's feel. Trial con.
-- **Vertical swipes RESTORED (2026-08-26)**: aerospace-swipe runs
-  demoted to vertical-only (direction-overrides patch, swipe_left/right
-  "none"), swipe-up fires `omniwmctl command toggle-overview`,
-  swipe-down closes via `omacosy-helper omniwm-overview-close` —
-  activation-based, since OmniWM blackholes IPC while its overview is
-  open and ignored synthetic Escape. Both live-verified.
-  PENDING: the granted swipe binary predates the direction-overrides
-  patch (their makefile skips recompiles without `make clean`), so
-  horizontal swipes are harmlessly double-handled until the
-  post-certificate rebuild.
+- **Swipes: one engine for all four directions.** omacosy-gesture
+  owns them under OmniWM as under AeroSpace
+  (`config/gesture/config.omniwm.json`): left and right step
+  workspaces, up opens `omacosy-overview`, down closes it. OmniWM's own
+  workspace swipe is off (`workspaceSwipeEnabled = false`). While it was
+  on, the two collided on the swipe UP, not sideways: with
+  `workspaceSwipeFingerCount` equal to `fingerCount` and scroll gestures
+  on, OmniWM forces that swipe vertical whatever `workspaceSwipeAxis`
+  says (`docs/omniwm-capabilities-config.md`), so every swipe up switched
+  workspace under the overview. The earlier setup (2026-08-26:
+  aerospace-swipe demoted to vertical-only, OmniWM's horizontal swipe
+  called harmless) is gone.
 - **Phantom-bar workaround FAILED** — their workspace bar's
   reserveLayoutSpace does reserve under dwindle (measured, windows
   y=32->78), but the bar cannot be made invisible (app icons and

@@ -123,7 +123,13 @@ cmd-ctrl-alt-s = 'exec-and-forget $HOME/.local/bin/omacosy-float'
 # wrapper-aware: the dwindle hint's solo container makes the bare
 # commands no-op or misfire (issue #3) — omacosy-layout compensates
 cmd-ctrl-alt-j = 'exec-and-forget $HOME/.local/bin/omacosy-layout togglesplit'
-cmd-ctrl-alt-f = 'fullscreen --no-outer-gaps'
+# Fullscreen: zoom one window inside its workspace.
+# NOT `--no-outer-gaps`. That flag drops the top gap too, which is the strip
+# omacosy-bar is drawn in, so Super+F covered the bar and came out
+# pixel-identical to Super+N below: both ignore the gaps and land at 0,0.
+# With the gaps kept, a zoomed window matches the tiling it came from and
+# keeps its focus ring, so it still reads as one window among several.
+cmd-ctrl-alt-f = 'fullscreen'
 # native (green-button) fullscreen: the only mode that may claim the
 # notch strip on the built-in display; deliberate enter/exit only
 cmd-ctrl-alt-n = 'macos-native-fullscreen'

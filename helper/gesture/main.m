@@ -805,7 +805,15 @@ int main(int argc, const char* argv[])
 			g_config.swipe_up,
 			g_config.swipe_down);
 
-		g_aerospace = aerospace_new(NULL);
+		// One attempt when OmniWM is the live manager. AeroSpace's socket
+		// is stale then and its startup budget is 30 tries a SECOND apart,
+		// so the connect blocks here for ~29 s — all of it before
+		// register_new_devices() arms the trackpad, which means every swipe
+		// in the half-minute after a switch is silently lost. Measured: the
+		// log's "Failed to connect to socket ... Falling back to CLI" line
+		// always sits in that gap. The CLI fallback carries the session, and
+		// under OmniWM the horizontal path does not use this client at all.
+		g_aerospace = aerospace_new_attempts(NULL, omniwm_available() ? 1 : 0);
 		if (!g_aerospace) {
 			fprintf(stderr, "Error: Failed to initialize Aerospace client.\n");
 			exit(EXIT_FAILURE);

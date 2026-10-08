@@ -51,6 +51,8 @@ start_aerospace_world() {
   # service". Both, in this order, cover both states.
   launchctl load "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist" 2>/dev/null || true
   launchctl kickstart -k "gui/$(id -u)/com.omacosy.gesture" 2>/dev/null || true
+  # recall answers an OmniWM behaviour, so it must not run under AeroSpace
+  launchctl bootout "gui/$(id -u)/com.omacosy.recall" 2>/dev/null || true
 }
 
 stop_aerospace_world() {
@@ -141,6 +143,8 @@ omniwm)
   # so the copy above needs a real restart and not just a bootstrap
   launchctl load "$HOME/Library/LaunchAgents/com.omacosy.gesture.plist" 2>/dev/null || true
   launchctl kickstart -k "gui/$(id -u)/com.omacosy.gesture" 2>/dev/null || true
+  # recall answers a Cmd+H behaviour OmniWM has, so it runs only under it
+  launchctl load "$HOME/Library/LaunchAgents/com.omacosy.recall.plist" 2>/dev/null || true
   # ...and at LOGIN: the first reboot of the OmniWM era booted straight
   # back into AeroSpace because only the login item decides who owns the
   # session at boot — the switch has to move it too

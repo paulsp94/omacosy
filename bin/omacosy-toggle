@@ -13,7 +13,7 @@ set -euo pipefail
 
 STATE="$HOME/.config/omacosy/disabled"
 UID_N="$(id -u)"
-AGENTS=(com.omacosy.ffm com.omacosy.borders com.omacosy.dwindle com.omacosy.bar com.omacosy.gesture)
+AGENTS=(com.omacosy.ffm com.omacosy.borders com.omacosy.dwindle com.omacosy.bar com.omacosy.gesture com.omacosy.recall)
 
 # the window manager this Mac uses, by the same rule as install.sh. The
 # login item stays while OmniWM is down or restarting, so a manager that
@@ -52,6 +52,8 @@ case "$mode" in
       # ffm fights OmniWM's own focus-follows-mouse, so install.sh and
       # omacosy-wm-switch keep it parked under OmniWM
       if [ "$wm" = omniwm ] && [ "$a" = com.omacosy.ffm ]; then continue; fi
+      # recall answers an OmniWM behaviour: load it only under OmniWM
+      if [ "$wm" != omniwm ] && [ "$a" = com.omacosy.recall ]; then continue; fi
       launchctl bootstrap "gui/$UID_N" "$HOME/Library/LaunchAgents/$a.plist" 2>/dev/null || true
     done
     if [ "$wm" = omniwm ]; then

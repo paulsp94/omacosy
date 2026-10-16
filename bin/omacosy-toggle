@@ -7,13 +7,18 @@
 # rule install.sh uses). No args = flip.
 #
 # Untouched either way: Karabiner's CapsLock=Super remap (harmless
-# while AeroSpace is off) and the native menu bar's auto-hide default
-# (the native menu bar is there once the bar is down).
+# while AeroSpace is off). `off` also hands the native menu bar and the
+# four-finger swipes back to macOS; `on` takes them again.
 set -euo pipefail
 
 STATE="$HOME/.config/omacosy/disabled"
 UID_N="$(id -u)"
 AGENTS=(com.omacosy.ffm com.omacosy.borders com.omacosy.dwindle com.omacosy.bar com.omacosy.gesture)
+
+# This script is a symlink into the clone; the shared macOS-prefs helper
+# lives beside install.sh there.
+REPO="$(cd "$(dirname "$(readlink "$HOME/.local/bin/omacosy-toggle" 2>/dev/null || echo "$0")")/.." && pwd)"
+macos_defaults() { [ -x "$REPO/macos-defaults.sh" ] && "$REPO/macos-defaults.sh" "$@"; }
 
 # the window manager this Mac uses, by the same rule as install.sh. The
 # login item stays while OmniWM is down or restarting, so a manager that
@@ -42,6 +47,9 @@ case "$mode" in
     for a in "${AGENTS[@]}"; do
       launchctl bootout "gui/$UID_N/$a" 2>/dev/null || true
     done
+    # Hand the native menu bar and the 4-finger swipes back to macOS while
+    # the daemon that would read them is down.
+    macos_defaults --release || true
     mkdir -p "$(dirname "$STATE")" && printf '%s\n' "$wm" >"$STATE"
     echo "omacosy: OFF — vanilla macOS. Restore with: omacosy-toggle on"
     ;;
@@ -54,6 +62,10 @@ case "$mode" in
       if [ "$wm" = omniwm ] && [ "$a" = com.omacosy.ffm ]; then continue; fi
       launchctl bootstrap "gui/$UID_N" "$HOME/Library/LaunchAgents/$a.plist" 2>/dev/null || true
     done
+    # Take the native menu bar and the 4-finger swipes again: the daemon is
+    # about to own them, and the Dock re-reads its gesture pref.
+    macos_defaults || true
+    killall Dock 2>/dev/null || true
     if [ "$wm" = omniwm ]; then
       open -a OmniWM 2>/dev/null || true
     elif pgrep -x AeroSpace >/dev/null; then

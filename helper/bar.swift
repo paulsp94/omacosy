@@ -361,7 +361,10 @@ func nerdFont(_ face: String, _ size: CGFloat) -> NSFont {
 // the workspace set, the visible one, the notch — belongs to the surface.
 final class Model {
     var focused = "" // globally focused workspace
-    var soleApp: [String: String] = [:] // ws -> app name, when it holds exactly one
+    // ws -> its distinct app names, in the order the WM listed them. The
+    // list IS the order the chips and the popup rows read — front app
+    // first — so it is append-only and never sorted here.
+    var appsOf: [String: [String]] = [:]
     var occupied: Set<String> = []
     var frontApp = ""
     var media = Media()
@@ -386,7 +389,7 @@ var palette = loadPalette()
 // frame has to travel.
 struct Snapshot {
     var perMonitor: [String: (workspaces: [String], visible: String)] = [:]
-    var soleApp: [String: String] = [:]
+    var appsOf: [String: [String]] = [:]
     var occupied: Set<String> = []
     var focused = "" // omniwm only — under aerospace the fast path owns it
 }
@@ -417,22 +420,19 @@ func aerospaceSnapshot() -> Snapshot {
         s.perMonitor[id] = (sets[id] ?? [], visible[id] ?? "")
     }
 
-    var sole: [String: String] = [:]
-    var count: [String: Int] = [:]
+    var apps: [String: [String]] = [:]
     for line in aerospace(["list-windows", "--all", "--format",
                            "%{workspace}|%{app-name}|%{window-layout}"]).split(separator: "\n") {
         let f = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
         guard f.count >= 3 else { continue }
         guard f[2] != "floating" else { continue }
         s.occupied.insert(f[0])
-        if let existing = sole[f[0]] {
-            if existing != f[1] { count[f[0]] = 2 }
-        } else {
-            sole[f[0]] = f[1]
-            count[f[0]] = 1
-        }
+        // first appearance wins, so the list keeps the WM's own order —
+        // the chip draws its pair from the front and the popup lists rows
+        // the same way
+        if !apps[f[0], default: []].contains(f[1]) { apps[f[0], default: []].append(f[1]) }
     }
-    s.soleApp = sole.filter { count[$0.key] == 1 }
+    s.appsOf = apps
     return s
 }
 
@@ -472,8 +472,7 @@ func omniwmSnapshot() -> Snapshot {
         s.perMonitor[id] = (sets[id] ?? [], visible[id] ?? "")
     }
 
-    var sole: [String: String] = [:]
-    var count: [String: Int] = [:]
+    var apps: [String: [String]] = [:]
     if let list = omniQuery("windows", ["--fields", "workspace,app,mode"])?["windows"]
         as? [[String: Any]] {
         for w in list {
@@ -481,16 +480,26 @@ func omniwmSnapshot() -> Snapshot {
                   let app = (w["app"] as? [String: Any])?["name"] as? String else { continue }
             guard (w["mode"] as? String) != "floating" else { continue }
             s.occupied.insert(ws)
-            if let existing = sole[ws] {
-                if existing != app { count[ws] = 2 }
-            } else {
-                sole[ws] = app
-                count[ws] = 1
-            }
+            if !apps[ws, default: []].contains(app) { apps[ws, default: []].append(app) }
         }
     }
-    s.soleApp = sole.filter { count[$0.key] == 1 }
+    s.appsOf = apps
     return s
+}
+
+// Which apps are ON a workspace is state; the order they come back in is
+// not. The two OmniWM sources enumerate a workspace's windows differently
+// (`query windows` against the `workspace-bar` payload), so comparing the
+// lists directly would call every snapshot a change and repaint the bar on
+// every workspace switch — the exact churn apply() exists to filter out.
+// So: keep the order already on screen while the set holds, and adopt the
+// new list only when the set itself moved.
+func stabilized(_ next: [String: [String]], against old: [String: [String]]) -> [String: [String]] {
+    var out = next
+    for (ws, list) in next {
+        if let had = old[ws], Set(had) == Set(list) { out[ws] = had }
+    }
+    return out
 }
 
 // Reports whether anything actually moved. A workspace switch produces
@@ -512,7 +521,8 @@ func apply(_ s: Snapshot) -> Bool {
         }
     }
     if model.occupied != s.occupied { model.occupied = s.occupied; changed = true }
-    if model.soleApp != s.soleApp { model.soleApp = s.soleApp; changed = true }
+    let apps = stabilized(s.appsOf, against: model.appsOf)
+    if model.appsOf != apps { model.appsOf = apps; changed = true }
     if !s.focused.isEmpty, model.focused != s.focused {
         tlog("focused \(s.focused) (snapshot)")
         model.focused = s.focused
@@ -1769,8 +1779,96 @@ func popupRows(for name: String) -> [PopupRow] {
     case "wifi": return wifiRows()
     case "bluetooth": return bluetoothRows()
     case "appmenu": return appMenuRows()
-    default: return []
+    default:
+        if name.hasPrefix("ws:") { return workspaceRows(String(name.dropFirst(3))) }
+        return []
     }
+}
+
+// --- workspace window list (multi-app chip click) -------------------------
+// The chip knows WHICH apps live on a workspace; the menu also wants the
+// window titles to pick between two Ghostty windows by. The two snapshot
+// calls do not carry titles, and adding them there would pull a full
+// title fetch on every window add/remove for a string only the menu
+// reads — so this is ONE extra query, made at the moment the menu opens,
+// cached for its lifetime (a refresh re-renders the rows it showed, it
+// does not go back to the WM mid-hover).
+struct WindowEntry {
+    let app: String
+    let title: String
+    let id: String // aerospace window id / omniwm opaque id
+}
+
+var wsWindows: [String: [WindowEntry]] = [:]
+
+func fetchWindows(of ws: String) -> [WindowEntry] {
+    var out: [WindowEntry] = []
+    if omniwmActive() {
+        let fields = ["--fields", "workspace,app,title,id,mode"]
+        if let list = omniQuery("windows", fields)?["windows"] as? [[String: Any]] {
+            for w in list {
+                guard (w["workspace"] as? [String: Any])?["rawName"] as? String == ws,
+                      let app = (w["app"] as? [String: Any])?["name"] as? String,
+                      let id = w["id"] as? String else { continue }
+                guard (w["mode"] as? String) != "floating" else { continue }
+                out.append(WindowEntry(app: app, title: (w["title"] as? String) ?? "", id: id))
+            }
+        }
+    } else {
+        // title LAST: it is the one field that can contain the separator,
+        // so the layout comes before it and maxSplits leaves the title
+        // whole instead of cutting it in half at its first pipe
+        for line in aerospace(["list-windows", "--all", "--format",
+                               "%{workspace}|%{app-name}|%{window-id}|%{window-layout}|%{window-title}"])
+            .split(separator: "\n") {
+            let f = line.split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false)
+                .map(String.init)
+            guard f.count == 5, f[0] == ws, f[3] != "floating" else { continue }
+            out.append(WindowEntry(app: f[1], title: f[4], id: f[2]))
+        }
+    }
+    // rows in the order the chip drew its icons: the app whose icon sits
+    // in front is the app whose window comes first
+    let order = model.appsOf[ws] ?? []
+    return out.enumerated()
+        .sorted { (a, b) in
+            let (x, y) = (order.firstIndex(of: a.element.app) ?? .max,
+                          order.firstIndex(of: b.element.app) ?? .max)
+            return x != y ? x < y : a.offset < b.offset
+        }
+        .map(\.element)
+}
+
+func focusWindow(_ w: WindowEntry) {
+    if omniwmActive() {
+        // navigate, not focus: the workspace may be on the other display,
+        // and focus alone would not take us there
+        omniwmctl(["window", "navigate", w.id])
+    } else {
+        aerospace(["focus", "--window-id", w.id])
+    }
+}
+
+func workspaceRows(_ ws: String) -> [PopupRow] {
+    let wins = wsWindows[ws] ?? []
+    var rows: [PopupRow] = [PopupRow(text: "workspace \(ws)", hero: true)]
+    for w in wins {
+        rows.append(PopupRow(image: appIcon(w.app),
+                             text: w.title.isEmpty ? w.app : w.title,
+                             detail: w.app,
+                             action: {
+                                 closePopup()
+                                 DispatchQueue.global(qos: .userInitiated).async { focusWindow(w) }
+                             }))
+    }
+    if wins.isEmpty {
+        rows.append(PopupRow(text: "no windows", dim: true))
+    }
+    rows.append(PopupRow(text: "switch to workspace \(ws)", dim: true, action: {
+        closePopup()
+        DispatchQueue.global(qos: .userInitiated).async { focusWorkspace(ws) }
+    }))
+    return rows
 }
 
 // The focused app's menu bar, read over Accessibility and rendered
@@ -2655,6 +2753,37 @@ final class BarView: NSView {
         drawText(s, font, color, centeredIn: box)
     }
 
+    // A multi-app workspace: the two MRU-most icons, leaned apart on a
+    // line tilted ~8° off horizontal, with +N for whatever did not fit.
+    // Everything — both side lengths, the lean, the badge — derives from
+    // chipIcon inside the fixed slot, so the chip row cannot grow. Like
+    // the .image branch, the icons ignore the focus tint: the accent
+    // square behind them is the focus feedback, unchanged.
+    private func drawStacked(_ front: NSImage, _ back: NSImage, extra: Int, in box: NSRect) {
+        let big = chipIcon * 0.78
+        let small = chipIcon * 0.72
+        let lean = chipIcon * 0.15
+        let rise = lean * tan(8 * CGFloat.pi / 180)
+        let baseY = (barHeight - chipIcon) / 2
+        back.draw(in: NSRect(x: box.midX + lean - small / 2,
+                             y: baseY + (chipIcon - small) / 2 + rise,
+                             width: small, height: small))
+        // a sliver of bar colour between them, or two square app icons
+        // overlap into one unreadable blob
+        palette.barBG.setFill()
+        let frontRect = NSRect(x: box.midX - lean - big / 2,
+                               y: baseY + (chipIcon - big) / 2 - rise,
+                               width: big, height: big)
+        NSBezierPath(roundedRect: frontRect.insetBy(dx: -1, dy: -1), xRadius: 3, yRadius: 3).fill()
+        front.draw(in: frontRect)
+        if extra > 0 {
+            let bf = nerdFont("Bold", 8)
+            let badge = "+\(extra)"
+            drawText(badge, bf, palette.label,
+                     leftAt: box.maxX - advance(badge, bf) - 1, midY: baseY + 4)
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         chipRects.removeAll()
         itemRects.removeAll()
@@ -2715,9 +2844,14 @@ final class BarView: NSView {
                 icon.draw(in: NSRect(x: box.midX - chipIcon / 2, y: (barHeight - chipIcon) / 2,
                                      width: chipIcon, height: chipIcon))
             case .some(.unavailable), .none:
-                if let app = model.soleApp[ws], let icon = appIcon(app) {
+                let apps = model.appsOf[ws] ?? []
+                if apps.count == 1, let icon = appIcon(apps[0]) {
                     icon.draw(in: NSRect(x: box.midX - chipIcon / 2, y: (barHeight - chipIcon) / 2,
                                          width: chipIcon, height: chipIcon))
+                } else if apps.count >= 2, let front = appIcon(apps[0]), let back = appIcon(apps[1]) {
+                    // Both have to resolve: half a pair would read as a
+                    // rendering bug, so a miss falls through to the digit.
+                    drawStacked(front, back, extra: apps.count - 2, in: box)
                 } else {
                     draw(String(ws.suffix(1)), chipFont, tint, centeredIn: box)
                 }
@@ -2834,8 +2968,40 @@ final class BarView: NSView {
                       on: surface, alignLeft: true)
             return
         }
-        if let ws = chipRects.first(where: { $0.1.contains(p) })?.0 {
-            DispatchQueue.global(qos: .userInitiated).async { focusWorkspace(ws) }
+        if let (ws, chip) = chipRects.first(where: { $0.1.contains(p) }) {
+            // One app (or none) is one click: the chip IS the jump. Two or
+            // more is a choice, and the choice needs the window titles,
+            // which cost a query — so the query runs here, on the click,
+            // never in the snapshot the redraw path waits on. The list
+            // mirrors what the chip drew: a stack only exists when both
+            // heads resolve to icons, and so does the menu.
+            let apps = model.appsOf[ws] ?? []
+            let stacked = apps.count >= 2 && appIcon(apps[0]) != nil && appIcon(apps[1]) != nil
+            let key = "ws:\(ws)"
+            if !stacked {
+                closePopup()
+                DispatchQueue.global(qos: .userInitiated).async { focusWorkspace(ws) }
+                return
+            }
+            // a second click on an open chip menu closes it, like every
+            // other popup owner
+            if openPopup == key { closePopup(); return }
+            guard openPopup == nil, let surface else {
+                closePopup()
+                return
+            }
+            let anchor = window?.convertToScreen(convert(chip, to: nil)) ?? chip
+            DispatchQueue.global(qos: .userInitiated).async {
+                let wins = fetchWindows(of: ws)
+                DispatchQueue.main.async {
+                    // anything opened while the query ran wins; a menu
+                    // appearing a beat late over the clock popup is worse
+                    // than no menu
+                    guard openPopup == nil else { return }
+                    wsWindows[ws] = wins
+                    showPopup(key, under: anchor, on: surface, alignLeft: true)
+                }
+            }
             return
         }
         if let part = mediaRects.first(where: { $0.1.contains(p) })?.0 {
@@ -3300,7 +3466,7 @@ func omniWorkspaceBarEvent(_ line: Data) {
     let t0 = DispatchTime.now().uptimeNanoseconds
     var changed = false
     var occupied = Set<String>()
-    var sole: [String: String] = [:]
+    var apps: [String: [String]] = [:]
     var focusedNow = ""
     for m in monitors {
         guard let id = m["id"] as? String,
@@ -3313,8 +3479,13 @@ func omniWorkspaceBarEvent(_ line: Data) {
                 .filter { ($0["appName"] as? String)?.hasPrefix("omacosy") != true }
             if !wins.isEmpty {
                 occupied.insert(name)
-                let apps = Set(wins.compactMap { $0["appName"] as? String })
-                if apps.count == 1, let app = apps.first { sole[name] = app }
+                // same ordered-dedup shape as the slow path: the fast path
+                // has to produce a list the snapshot would produce, or
+                // every watch event reads as a change and repaints
+                var list: [String] = []
+                for app in wins.compactMap({ $0["appName"] as? String })
+                where !list.contains(app) { list.append(app) }
+                apps[name] = list
             }
         }
         guard !active.isEmpty else { continue }
@@ -3326,7 +3497,8 @@ func omniWorkspaceBarEvent(_ line: Data) {
     }
     if !focusedNow.isEmpty, model.focused != focusedNow { model.focused = focusedNow; changed = true }
     if model.occupied != occupied { model.occupied = occupied; changed = true }
-    if model.soleApp != sole { model.soleApp = sole; changed = true }
+    let appsNow = stabilized(apps, against: model.appsOf)
+    if model.appsOf != appsNow { model.appsOf = appsNow; changed = true }
     guard changed else { return }
     repaint()
     kickVisibility()

@@ -3441,6 +3441,11 @@ func reconcile(_ why: String, restart: Bool = true) {
         tlog("wm: now \(omni ? "omniwm" : "aerospace") (\(why)), relabelling the bar")
         rebuildSurfaces([:])
         repaint()
+        // The bar usually starts BEFORE OmniWM at login, so the startup
+        // ask found no manager to write for and stopped; this transition
+        // is the moment there is one. Idempotent: a second run with the
+        // same numbers rewrites nothing.
+        if omni { syncTopGaps() }
     }
     if restart { reconcileStep = 0 }
     reconcileRetry?.cancel()
@@ -3530,6 +3535,30 @@ func resyncIfGained() {
     resyncedCount = now
 }
 
+// Each display's window gap follows ITS bar: a display's own menu-bar
+// strip plus the margin, written to OmniWM as a per-monitor override
+// keyed by display UUID (see bin/omacosy-omniwm-gaps). One global
+// outer.top cannot fit a notched built-in and a flat external at once —
+// the bars are the same display-by-display measurement this file makes
+// for its own windows — and a resolution change rescales a strip, so
+// the ask runs on every screen-parameters change, not only on a count
+// change. The script is idempotent: it rewrites settings.toml only when
+// a number actually moved, and says nothing when nothing did.
+//
+// Off OmniWM there is nothing to write (AeroSpace's outer.top is sized
+// per monitor by the same install.sh question, statically), and the
+// bar's own displays change faster than the WM adopts them: the script
+// asks NSScreen directly, which is settled by the time this runs.
+func syncTopGaps() {
+    guard omniwmActive() else { return }
+    DispatchQueue.global(qos: .utility).async {
+        let out = shell("\(NSHomeDirectory())/.local/bin/omacosy-omniwm-gaps", [])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !out.isEmpty else { return }
+        DispatchQueue.main.async { tlog("gaps: " + out.replacingOccurrences(of: "\n", with: "; ")) }
+    }
+}
+
 // Displays come and go: re-resolve which aerospace monitor this screen is
 // now, move the window onto it, and rebuild. Screen parameters arrive
 // before the arrangement settles, so give it a beat (borders.swift learnt
@@ -3567,6 +3596,9 @@ NotificationCenter.default.addObserver(
         // the WM can adopt the new display after this grace: reconcile asks
         // again until it answers, with its own backoff
         reconcile("screens")
+        // every display's strip is settled by now; size its window gap from
+        // it (resolution changes rescale strips, so not only on a count move)
+        syncTopGaps()
         let now = NSScreen.screens.count
         guard now != monitorCount else { return }
         monitorCount = now
@@ -3879,5 +3911,6 @@ repaint()
 primeMedia()
 reconcile("startup") // the OmniWM watch, and retries for a manager not up yet
 resyncWallpaper() // a display plugged in while the machine was off missed the last theme change
+syncTopGaps() // covers a sleep or a replug that happened while the bar was down
 tlog("omacosy-bar up on " + surfaces.map { "\($0.screen.localizedName)=m\($0.monitorID)\($0.notched ? " (notched)" : "")" }.joined(separator: ", "))
 app.run()

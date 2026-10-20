@@ -40,6 +40,22 @@ instead, run `./install.sh --omniwm`: AeroSpace is then not installed.
 A later `install.sh` or `omacosy-update` keeps the window manager you
 chose.
 
+`--launcher` chooses what `Super+Space` opens: `auto` (the default),
+`raycast`, `tinycast`, `alfred`, `omniwm` or `none`. `auto` means Raycast
+on AeroSpace and OmniWM's own launcher on OmniWM. `omniwm` is only
+available while OmniWM is the window manager; the other values work under
+either manager. `none` installs no third-party launcher and leaves
+`Super+Space` unbound — use it for an unsupported launcher (LaunchBar,
+Quicksilver, Spotlight, a custom script), a launcher's own hotkey, or no
+launcher at all. For example:
+
+```sh
+./install.sh --omniwm --launcher tinycast   # OmniWM + Tinycast, no Raycast
+./install.sh --aerospace --launcher alfred  # AeroSpace + Alfred, no Raycast
+```
+
+The launcher choice is independent of the window manager.
+
 `./install.sh --yazi` also installs yazi, an optional file manager on
 `Super+Shift+Y`; `--yazi-full` adds its video and raw-photo previews. Both
 are off by default; see [the tool table](#whats-inside).
@@ -191,7 +207,26 @@ System Settings takes effect with no reinstall. Override any app in
 # config/apps.local.conf — your picks win over apps.conf
 TERMINAL=Korren
 BROWSER=Arc          # pins the browser chord; EMAIL pins the mail chord
+LAUNCHER=tinycast    # auto, raycast, tinycast, alfred, omniwm or none
 ```
+
+`LAUNCHER` is what `Super+Space` opens. `auto` follows the window manager
+(Raycast on AeroSpace, OmniWM on OmniWM), and `none` leaves the chord
+unbound for an unsupported launcher (LaunchBar, Quicksilver, Spotlight, a
+custom script), a launcher's own hotkey, or no launcher at all. `omniwm`
+only works while OmniWM is the window manager; `set
+omniwm` refuses otherwise. Change it without editing the file or
+reinstalling:
+
+```sh
+omacosy-launcher status           # what is set, what it resolves to
+omacosy-launcher status --json    # the same, for scripts
+omacosy-launcher set tinycast     # write the choice and rebind the chord
+```
+
+`set` updates `config/apps.local.conf` too, so a later `install.sh` keeps
+the choice. It does not install the launcher app and never changes the
+window manager.
 
 Your personal shell config belongs in `~/.zshrc.local`; the repo's
 `zshrc` wires the CLI stack and sources it.
@@ -201,6 +236,7 @@ Your personal shell config belongs in `~/.zshrc.local`; the repo's
 | Piece | Tool | Config |
 |---|---|---|
 | Tiling WM | [AeroSpace](https://github.com/nikitabobko/AeroSpace) *or* [OmniWM](https://github.com/BarutSRB/OmniWM) via `omacosy-wm-switch` | `config/aerospace/aerospace.template.toml`, `config/omniwm/settings.toml` |
+| Launcher (`Super+Space`) | Raycast, Tinycast, Alfred or OmniWM's own, chosen by `LAUNCHER` | `config/apps.conf`, `bin/omacosy-launcher` |
 | Super key | [Karabiner](https://karabiner-elements.pqrs.org) (Caps Lock → cmd+ctrl+alt) | `config/karabiner/` (copied, not symlinked — TCC) |
 | Status bar, popups, shade | `omacosy-bar` (self-compiled launchd agent, one process draws all of it) | `helper/bar.swift` |
 | Window borders + fullscreen shroud | `omacosy-borders` (self-compiled launchd agent) | `helper/borders.swift`, `config/borders.conf` |
@@ -399,7 +435,7 @@ on re-runs and names such keyboards when it finds one connected.
 | `Super+shift+;` | service mode (`esc` reload, `r` flatten, `⌫` close others) |
 | **Apps and system** | |
 | `Super+enter` / `Super+shift+enter` | terminal / browser (the default browser) |
-| `Super+space` | launcher (Raycast; the OmniWM option opens OmniWM's command palette instead) |
+| `Super+space` | launcher — `LAUNCHER` in `apps.conf`; `auto` is Raycast on AeroSpace and OmniWM's launcher on OmniWM |
 | `Super+shift+f` / `+m` / `+g` / `+e` | files / music / messenger / mail (set in `apps.conf`; mail is the default mail app); files opens a NEW Finder window on every press |
 | `Super+shift+t` | next theme |
 | `Super+shift+y` | yazi, a file manager, in a new Ghostty window (only when yazi is installed) |
@@ -546,8 +582,9 @@ type-to-search), gestures, keybindings, themes — and the dwindle
 layout is native, so the split-hint machinery below simply isn't
 needed there. What changes: OmniWM draws the focus border (themed by
 theme-set), app-launching chords run through Karabiner rules that the
-switch installs and removes, and Super+Space opens OmniWM's command
-palette instead of Raycast.
+switch installs and removes, and Super+Space opens OmniWM's launcher
+when `LAUNCHER=auto`. Set `LAUNCHER=raycast`, `tinycast` or `alfred` to
+use one of those under OmniWM instead; `none` leaves the chord unbound.
 
 Under OmniWM the plumbing changes shape: `Super+N`/`Hyper+N` route
 through Karabiner into `omacosy-omni` (a held-socket IPC client) so

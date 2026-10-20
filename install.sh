@@ -408,10 +408,18 @@ fi
 # for one) match the same test, and routing them through Karabiner is
 # the user's call.
 KB_CLI="/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"
+# Best-effort. On a first install the Karabiner daemon is not up yet, so
+# the CLI exits 0 with an empty stdout and python's json.loads fails.
+# Under pipefail that aborts the install before AeroSpace, the helpers,
+# or the Caps Lock remap ever start. A missing note is fine; a
+# half-installed desktop is not. || true also covers a non-zero CLI.
 if [ -x "$KB_CLI" ]; then
   "$KB_CLI" --list-connected-devices 2>/dev/null | python3 -c '
 import json, sys
-devs = json.load(sys.stdin)
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
+devs = json.loads(raw)
 cfg = json.load(open(sys.argv[1]))
 p = next(p for p in cfg["profiles"] if p.get("selected"))
 on = [d.get("identifiers", {}) for d in p.get("devices", []) if d.get("ignore") is False]
@@ -426,7 +434,7 @@ for d in devs:
     log "NOTE: Karabiner leaves \"$name\" unmodified (it is also a pointing device), so"
     log "  Caps Lock is no Super key there. If it is a keyboard: Karabiner-Elements >"
     log "  Settings > Devices > turn on Modify events for it. Re-runs keep that switch."
-  done
+  done || true
 fi
 launchctl kickstart -k "gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server" 2>/dev/null || true
 # the copy above reset the file to the seed, which has only the Caps Lock

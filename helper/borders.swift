@@ -274,34 +274,28 @@ func safeTop(for d: CGRect) -> CGFloat {
     return 0
 }
 
-// Under OmniWM this test cannot work: its 0.6.3 dwindle applies no
-// outer gaps (upstream bug, docs/omniwm-port.md), so every tile starts
-// at the safe-area edge at full height and reads as fullscreen — the
-// ring vanished and the shroud black-banded the bar's strip. Until the
-// gap bug is fixed, OmniWM mode keeps ring and strip, accepting ring
-// overlap on a true fullscreen window.
-
-// Cached for 0.5s: the lookup walks every running app (0.36ms) and runs
-// twice per tick, which adds up across a drag.
-var omniwmCached = false
-var omniwmCheckedAt = Date.distantPast
-func omniwmActive() -> Bool {
-    if Date().timeIntervalSince(omniwmCheckedAt) < 0.5 { return omniwmCached }
-    omniwmCheckedAt = Date()
-    omniwmCached = NSWorkspace.shared.runningApplications.contains {
-        $0.bundleIdentifier == "com.barut.OmniWM"
-    }
-    return omniwmCached
-}
+// The OmniWM exemption is gone, 2026-09-13. It existed because dwindle
+// applied no outer gaps, so every tile started at the safe-area edge at
+// full height and read as fullscreen — the ring vanished and the shroud
+// black-banded the bar's strip. OmniWM has the gaps now (8 on the sides,
+// bar-height + margin on top), so a tile starts 8 or 38 points down and
+// the `< inset + 3` test below correctly calls it NOT fullscreen, while a
+// native-fullscreen window at y=0 still trips it. An OmniWM Super+F window
+// keeps the outer gaps too, so it also reads as not-fullscreen — which is
+// right: it does not cover the bar.
 
 func isFullscreen(_ r: CGRect) -> Bool {
-    if omniwmActive() { return false }
     var ids = [CGDirectDisplayID](repeating: 0, count: 8)
     var n: UInt32 = 0
     guard CGGetActiveDisplayList(8, &ids, &n) == .success else { return false }
     for i in 0..<Int(n) {
         let d = CGDisplayBounds(ids[i])
         guard d.intersects(r) else { continue }
+        // Across this display, not beside it. OmniWM parks hidden workspaces'
+        // windows at full size one point onto a display edge (1439,0 or,
+        // with a second display to the right, -1439,0), and `intersects`
+        // alone let such a window pass the tests below.
+        guard r.minX >= d.minX - 2, r.maxX <= d.maxX + 2 else { continue }
         // native fullscreen (incl. split-view halves): starts at the
         // display top or just below the notch strip, and spans the
         // remaining height. Managed windows never do — the bar owns
@@ -498,17 +492,12 @@ func recheck(after delay: Double) {
 }
 
 func tick() {
-    // Under OmniWM the ring is parked entirely: OmniWM draws its own
-    // border (themed by theme-set writing [borders.color] into its
-    // settings), and the WM's border hugs screen edges where our
-    // outside-stroked ring clips — tiles touch the edges there (the
-    // 0.6.3 outer-gap bug). The daemon stays resident so switching
-    // back to AeroSpace needs no restart.
-    if omniwmActive() {
-        hideRing("omniwm")
-        syncShroud(nil)
-        return
-    }
+    // The ring draws under OmniWM too, since 2026-09-13. It used to be
+    // parked there: OmniWM drew its own border because our outside-stroked
+    // ring clipped where tiles touched the screen edges. With outer gaps
+    // applied there is room to stroke outside, so one ring serves both
+    // managers — same width, same radius, same per-app radii. OmniWM's own
+    // [borders] is off in settings.toml to keep it to one.
     noteStat(event: false)
     guard let hit = focusedWindowFrame() else {
         // ring already hidden: there is nothing to hide and nothing
@@ -642,16 +631,116 @@ func watch(_ path: String, create: Bool, handler: @escaping () -> Void) {
     src.resume()
 }
 
-// aerospace announces workspace switches by touching this file
-// (exec-on-workspace-change): hide instantly and arm the stability
-// gate — the SLS move-burst alone can't distinguish a switch from a
-// drag until the ghosts are already ringed
-watch("/tmp/omacosy-ws-switch", create: true) {
+// a workspace switch: hide instantly and arm the stability gate — the
+// SLS move-burst alone can't distinguish a switch from a drag until the
+// ghosts are already ringed
+func workspaceSwitched(_ source: String) {
     lastWsSwitchAt = Date()
     focusMayHaveChanged = true // the target workspace has its own focus
-    hideRing("workspace-switch")
+    hideRing("workspace-switch \(source)")
     syncShroud(nil) // the next tick re-covers if the target is fullscreen too
 }
+
+// aerospace announces workspace switches by touching this file
+// (exec-on-workspace-change)
+watch("/tmp/omacosy-ws-switch", create: true) { workspaceSwitched("aerospace") }
+
+// OmniWM has no exec hook: without its event the ring stayed on the old
+// window until the 0.35s miss gate, on every switch to an empty workspace
+let omniwmctlBin = ["/opt/homebrew/bin/omniwmctl",
+                    "/Applications/OmniWM.app/Contents/MacOS/omniwmctl"]
+    .first { FileManager.default.isExecutableFile(atPath: $0) }
+var omniBuffer = Data()
+
+// The event can land AFTER the ring already moved to the new workspace's
+// window (1 switch in 10); hiding then blinks a correct ring for 0.35s.
+// So hide unless the ring sits on the window OmniWM calls focused there.
+// Runs off the main thread: the query is a process spawn.
+func omniWorkspaceEvent(_ line: String) {
+    guard let root = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        (root["kind"] as? String) == "event",
+        let payload = (root["result"] as? [String: Any])?["payload"] as? [String: Any]
+    else { return }
+    let wsId = (payload["workspace"] as? [String: Any])?["id"] as? String
+    let focused = omniFocusedWid(onWorkspace: wsId)
+    DispatchQueue.main.async {
+        if win.isVisible, let wid = focused, wid == lastWid {
+            lastWsSwitchAt = Date() // ring is already right: keep it
+            focusMayHaveChanged = true
+            tlog("keep reason=workspace-switch omniwm wid=\(wid)")
+        } else {
+            workspaceSwitched("omniwm")
+        }
+    }
+}
+
+// CG window number of the focused window on that workspace, nil if it
+// has none. OmniWM ids are "ow_" + base64("<uuid>:<pid>:<window number>").
+func omniFocusedWid(onWorkspace wsId: String?) -> UInt32? {
+    let omni = "\(NSHomeDirectory())/.local/bin/omacosy-omni"
+    let p = Process()
+    if FileManager.default.isExecutableFile(atPath: omni) {
+        p.executableURL = URL(fileURLWithPath: omni) // persistent socket, ~8 ms
+        p.arguments = ["query", "focused-window"]
+    } else if let bin = omniwmctlBin {
+        p.executableURL = URL(fileURLWithPath: bin)
+        p.arguments = ["query", "focused-window", "--format", "json"]
+    } else { return nil }
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let payload = (root["result"] as? [String: Any])?["payload"] as? [String: Any],
+        let w = payload["window"] as? [String: Any],
+        let ws = (w["workspace"] as? [String: Any])?["id"] as? String, ws == wsId,
+        let id = w["id"] as? String, id.hasPrefix("ow_")
+    else { return nil }
+    var b64 = String(id.dropFirst(3))
+    b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+    guard let raw = Data(base64Encoded: b64),
+        let last = String(decoding: raw, as: UTF8.self).split(separator: ":").last
+    else { return nil }
+    return UInt32(last)
+}
+func startOmniSubscription() {
+    guard let bin = omniwmctlBin else { return } // AeroSpace-only machine
+    omniBuffer = Data()
+    // launchd's kickstart -k is SIGKILL and orphans our child under pid 1
+    let reap = Process()
+    reap.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+    reap.arguments = ["-P", "1", "-f", "omniwmctl subscribe active-workspace"]
+    try? reap.run()
+    reap.waitUntilExit()
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: bin)
+    // --reconnect waits out OmniWM restarts and AeroSpace sessions
+    p.arguments = ["subscribe", "active-workspace", "--no-send-initial",
+                   "--reconnect", "--format", "ndjson"]
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    // the handler runs serially on the pipe's own queue, so the buffer
+    // needs no lock and events keep their order
+    pipe.fileHandleForReading.readabilityHandler = { handle in
+        let chunk = handle.availableData
+        guard !chunk.isEmpty else { return }
+        omniBuffer.append(chunk)
+        while let nl = omniBuffer.firstIndex(of: 0x0A) {
+            let line = String(decoding: omniBuffer[omniBuffer.startIndex..<nl], as: UTF8.self)
+            omniBuffer = Data(omniBuffer[omniBuffer.index(after: nl)...])
+            omniWorkspaceEvent(line)
+        }
+    }
+    p.terminationHandler = { _ in
+        pipe.fileHandleForReading.readabilityHandler = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { startOmniSubscription() }
+    }
+    do { try p.run() } catch { tlog("omniwmctl subscribe failed: \(error)") }
+}
+startOmniSubscription()
 
 // theme-set swaps the ~/.config/omarchy/current/theme symlink — watch
 // the directory; the file behind the old symlink never changes itself

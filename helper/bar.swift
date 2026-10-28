@@ -66,6 +66,13 @@ func SLSRegisterNotifyProc(_ proc: NotifyProc, _ event: UInt32, _ context: Unsaf
 func SLSGetEventPort(_ cid: Int32, _ port: UnsafeMutablePointer<mach_port_t>) -> CGError
 @_silgen_name("SLEventCreateNextEvent")
 func SLEventCreateNextEvent(_ cid: Int32) -> Unmanaged<CGEvent>?
+// A display's current space, and its type. Every display has its own current
+// space, so the pair answers "is this display in a native fullscreen space?"
+// per display. Space type 4 is a native fullscreen space; 0 is a desktop.
+@_silgen_name("SLSManagedDisplayGetCurrentSpace")
+func SLSManagedDisplayGetCurrentSpace(_ cid: Int32, _ display: CFString) -> UInt64
+@_silgen_name("SLSSpaceGetType")
+func SLSSpaceGetType(_ cid: Int32, _ space: UInt64) -> Int32
 
 let EVENT_WINDOW_MOVE: UInt32 = 806
 let EVENT_WINDOW_RESIZE: UInt32 = 807
@@ -3102,17 +3109,24 @@ func safeTop(for display: CGRect) -> CGFloat {
     return 0
 }
 
+// A native fullscreen space on this display. There macOS draws its own black
+// menu bar on a top-edge hover, as on any Mac, and this bar stays out of it:
+// no reveal, and no strip capture. Space type 4 is a fullscreen space.
+func inNativeFullscreen(_ screen: NSScreen) -> Bool {
+    guard let uuid = CGDisplayCreateUUIDFromDisplayID(screenID(screen))?.takeRetainedValue(),
+          let name = CFUUIDCreateString(nil, uuid) else { return false }
+    let space = SLSManagedDisplayGetCurrentSpace(SLSMainConnectionID(), name)
+    return space != 0 && SLSSpaceGetType(SLSMainConnectionID(), space) == 4
+}
+
 func fullscreenDisplays() -> Set<CGDirectDisplayID> {
     var covered: Set<CGDirectDisplayID> = []
-    // Under OmniWM the width test below cannot separate a tiled window
-    // from a fullscreen one: its 0.6.3 dwindle applies no outer gaps
-    // (resolved settings say 42, layout applies 0 — upstream bug, see
-    // docs/omniwm-port.md), so ordinary tiles take the side gaps too
-    // and EVERYTHING reads as fullscreen — the bar lived in
-    // hover-reveal permanently. Until the gap bug is fixed the bar
-    // stays visible under OmniWM, accepting that it overlaps a real
-    // fullscreen window instead of ducking away.
-    if omniwmActive() { return covered }
+    // No OmniWM exemption. It existed because 0.6.3's dwindle applied no
+    // outer gaps, so every tile read as fullscreen. OmniWM 0.7.x applies them,
+    // so a tile starts below the top gap and fails the top-edge test below,
+    // while a native fullscreen window at 0,0 passes. Without this check under
+    // OmniWM, a window going native fullscreen had the bar drawn over it until
+    // the space switch: a visible flash.
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
     else { return covered }
     var ids = [CGDirectDisplayID](repeating: 0, count: 8)
@@ -3133,7 +3147,13 @@ func fullscreenDisplays() -> Set<CGDirectDisplayID> {
             // ordinary tiled Arc reads as fullscreen. WIDTH is what
             // separates them — `--no-outer-gaps` means exactly that, the
             // window takes the side gaps too, and a tiled one never does.
-            if rect.origin.y - display.origin.y < inset + 3,
+            // Both edges, both sides. `intersects` is true for a window
+            // overlapping the display by one point, and OmniWM parks the
+            // workspaces you are not looking at at FULL SIZE one point onto a
+            // display edge: 1439,0, or -1439,0 with a second display to the
+            // right. Such a window is not on screen and must not count.
+            if (-2 ..< inset + 3).contains(rect.origin.y - display.origin.y),
+               abs(rect.origin.x - display.origin.x) < 2,
                rect.height >= display.height - inset - 6,
                rect.width >= display.width - 2 {
                 covered.insert(ids[i])
@@ -3180,11 +3200,16 @@ func pointerAtScreenTop() {
     else { return }
     let fromTop = screen.frame.maxY - p.y
     if fromTop <= revealEdge {
-        // Climb only when fullscreen actually hides the bar. Otherwise stay
-        // at the -20 resting level so the auto-hidden native menu bar can
-        // slide in ABOVE the bar and stay clickable — app menus are
-        // unreachable by mouse without this.
-        if fullscreenDisplays().contains(screenID(screen)) {
+        // In a native fullscreen space macOS draws its own black menu bar on a
+        // top-edge hover, and only that: this bar stays hidden, so a film is
+        // not covered by our strip.
+        if inNativeFullscreen(screen) {
+            // nothing
+        } else if fullscreenDisplays().contains(screenID(screen)) {
+            // Climb only when fullscreen actually hides the bar. Otherwise stay
+            // at the -20 resting level so the auto-hidden native menu bar can
+            // slide in ABOVE the bar and stay clickable — app menus are
+            // unreachable by mouse without this.
             setRevealed(true)
         }
     } else if revealed, openPopup == nil,
@@ -3198,7 +3223,9 @@ func pointerAtScreenTop() {
 func updateBarVisibility() {
     let covered = fullscreenDisplays()
     for surface in surfaces {
-        let hide = covered.contains(screenID(surface.screen)) && !revealed
+        // In a native fullscreen space the bar is hidden whatever the reveal
+        // state: macOS shows its own black menu bar there and nothing else.
+        let hide = inNativeFullscreen(surface.screen) || (covered.contains(screenID(surface.screen)) && !revealed)
         // unconditional either way: isVisible can desync from the window
         // server, which is how borders.swift ended up with a stuck shroud
         if hide {
@@ -3640,9 +3667,17 @@ func rebuildSubscriptions() {
 // a fullscreen check is a window-list read, not a subprocess: cheap
 // enough to run on a short debounce after any window event
 var visibilityPending: DispatchWorkItem?
+var lastVisibilityCheck = Date.distantPast
 func kickVisibility() {
+    // Also at the FIRST event, then at most every 0.1s. A window animating
+    // into native fullscreen sends a stream of move and resize events, and a
+    // check that only runs once they stop left the bar over it for 0.94s.
+    if Date().timeIntervalSince(lastVisibilityCheck) >= 0.1 {
+        lastVisibilityCheck = Date()
+        updateBarVisibility()
+    }
     visibilityPending?.cancel()
-    let work = DispatchWorkItem { updateBarVisibility() }
+    let work = DispatchWorkItem { lastVisibilityCheck = Date(); updateBarVisibility() }
     visibilityPending = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
 }
@@ -3812,6 +3847,11 @@ locationGate.start()
 
 // bluetooth: gated on the privacy grant, which the watcher above also needs
 bluetoothWatcher.start()
+
+// entering or leaving a native fullscreen space: hide or show the bar at once
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+) { _ in updateBarVisibility() }
 
 // waking clears the gamma table, so the shade has to be reasserted.
 // A monitor unplugged or replugged while asleep is the case the screen

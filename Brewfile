@@ -11,10 +11,24 @@ else
   cask "aerospace"
 end
 
+# The launcher: install.sh --launcher sets HOMEBREW_OMACOSY_LAUNCHER.
+# auto is resolved there to raycast on AeroSpace and none on OmniWM, so an
+# OmniWM install does not pull a second launcher it does not use. Tinycast
+# lives in a third-party tap.
+launcher = ENV.fetch("HOMEBREW_OMACOSY_LAUNCHER", "raycast")
+case launcher
+when "raycast"
+  cask "raycast"
+when "tinycast"
+  tap "abue-ammar/tinycast"
+  cask "tinycast"
+when "alfred"
+  cask "alfred"
+end
+
 # Window management + bar + borders
 cask "karabiner-elements"  # Caps Lock -> Super
 cask "ghostty"             # default terminal + floating TUI host (btop)
-cask "raycast"             # Super+Space launcher (the binding assumes it)
 
 # CLI stack
 brew "fzf"

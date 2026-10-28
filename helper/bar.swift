@@ -3257,6 +3257,30 @@ watch(movedPath, create: true) {
     kickRebuild()
 }
 
+// Alfred's panel never becomes the frontmost app, so returning focus to
+// the app behind it does not close it, and activating another app would
+// switch workspaces. omacosy-launcher writes "Alfred" here; the bar
+// already holds Accessibility, so it sends one targeted Command+W.
+// Tinycast does not use this path: it closes by returning focus.
+let dismissPath = "/tmp/omacosy-bar-dismiss"
+watch(dismissPath, create: true) {
+    guard let text = try? String(contentsOfFile: dismissPath, encoding: .utf8) else { return }
+    let owner = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard owner == "Alfred",
+        let app = NSWorkspace.shared.runningApplications.first(where: {
+            ($0.localizedName ?? "").caseInsensitiveCompare(owner) == .orderedSame
+        })
+    else { return }
+    let pid = app.processIdentifier
+    let src = CGEventSource(stateID: .privateState)
+    let down = CGEvent(keyboardEventSource: src, virtualKey: 13, keyDown: true)
+    down?.flags = .maskCommand
+    let up = CGEvent(keyboardEventSource: src, virtualKey: 13, keyDown: false)
+    up?.flags = .maskCommand
+    down?.postToPid(pid)
+    up?.postToPid(pid)
+}
+
 let wsPath = "/tmp/omacosy-bar-ws"
 watch(wsPath, create: true) {
     let t0 = DispatchTime.now().uptimeNanoseconds

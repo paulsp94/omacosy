@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# omacosy-launcher — Super+Space opens the chosen launcher.
+#
+#   omacosy-launcher                  open the configured launcher
+#   omacosy-launcher status           show the setting and what it resolves to
+#   omacosy-launcher status --json    the same, for a GUI
+#   omacosy-launcher set <value>      auto|raycast|tinycast|alfred|omniwm|none
+#
+# The value lives in ~/.config/omacosy/apps.conf as LAUNCHER. "auto" follows
+# the window manager: Raycast under AeroSpace, OmniWM's launcher under OmniWM.
+# "none" leaves the chord unbound and is removed by install.sh and by `set`;
+# there is no binding to call this script in that state. It is for an
+# unsupported launcher (LaunchBar, Quicksilver, Spotlight, a custom script),
+# a launcher's own hotkey, or no launcher at all.
+#
+# `set` writes the live config and config/apps.local.conf (so a reinstall
+# keeps the choice), replaces or removes the AeroSpace chord, and refreshes
+# the OmniWM Karabiner rules. It does not install a launcher and never changes
+# the window manager.
+set -u
+
+APPS="$HOME/.config/omacosy/apps.conf"
+AERO="$HOME/.config/aerospace/aerospace.toml"
+KARA="$HOME/.local/bin/omacosy-karabiner-omniwm"
+OMNI="$HOME/.local/bin/omacosy-omni"
+HELPER="$HOME/.local/bin/omacosy-helper"
+DISMISS="/tmp/omacosy-bar-dismiss"
+OMNIWMCTL="$(command -v omniwmctl 2>/dev/null || echo /opt/homebrew/bin/omniwmctl)"
+
+valid() {
+  case "$1" in
+    auto | raycast | tinycast | alfred | omniwm | none) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configured() {
+  local v=""
+  [ -f "$APPS" ] && . "$APPS" 2>/dev/null
+  v="${LAUNCHER:-auto}"
+  valid "$v" || v=auto
+  printf '%s' "$v"
+}
+
+omniwm_active() {
+  [ -x "$OMNI" ] && "$OMNI" active >/dev/null 2>&1
+}
+
+installed() {
+  case "$1" in
+    raycast) mdfind "kMDItemCFBundleIdentifier == 'com.raycast.macos'" 2>/dev/null | grep -q . ;;
+    tinycast) mdfind "kMDItemCFBundleIdentifier == 'com.tinycast.app'" 2>/dev/null | grep -q . ;;
+    alfred) mdfind "kMDItemCFBundleIdentifier == 'com.runningwithcrayons.Alfred'" 2>/dev/null | grep -q . ;;
+    omniwm) [ -d /Applications/OmniWM.app ] ;;
+    *) return 1 ;;
+  esac
+}
+
+resolved() {
+  case "$1" in
+    auto)
+      if omniwm_active; then printf 'omniwm'; else printf 'raycast'; fi
+      ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+window_open() {
+  local owner=$1
+  [ -x "$HELPER" ] && "$HELPER" window-exists "$owner" >/dev/null 2>&1
+}
+
+toggle_hotkey() {
+  # The launchers' own global hotkey. Tinycast and Raycast both answer a
+  # clean Option+Space; this is the toggle their direct shortcut uses.
+  osascript -e 'tell application "System Events" to key code 49 using option down' >/dev/null 2>&1
+}
+
+open_one() {
+  case "$1" in
+    raycast)
+      if window_open Raycast; then
+        toggle_hotkey
+        return 0
+      fi
+      # -g lets the non-activating panel appear without taking focus.
+      open -g -b com.raycast.macos "raycast://" >/dev/null 2>&1
+      ;;
+    tinycast)
+      if window_open Tinycast; then
+        toggle_hotkey
+        return 0
+      fi
+      # -g is the difference from the URL's activate path: the app behind
+      # keeps focus, exactly like Tinycast's own Option+Space shortcut.
+      open -g -b com.tinycast.app "tinycast://" >/dev/null 2>&1
+      ;;
+    alfred)
+      installed alfred || return 1
+      if window_open Alfred; then
+        # No focus change: activating another app would switch workspaces.
+        # The bar's watcher dismisses it; this command does not wait or poll.
+        printf 'Alfred' > "$DISMISS" 2>/dev/null || true
+        return 0
+      fi
+      osascript -e 'tell application id "com.runningwithcrayons.Alfred" to search ""' >/dev/null 2>&1
+      ;;
+    omniwm)
+      [ -x "$OMNIWMCTL" ] || return 1
+      "$OMNIWMCTL" command open-command-palette applications >/dev/null 2>&1
+      ;;
+    none) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+open_launcher() {
+  local value target_resolved target
+  value="$(configured)"
+  [ "$value" = none ] && exit 0
+  target_resolved="$(resolved "$value")"
+  for target in "$target_resolved" raycast tinycast alfred; do
+    case "$target" in '' | none) continue ;; esac
+    open_one "$target" && exit 0
+  done
+  exit 1
+}
+
+status() {
+  local value target_resolved r t a o active available
+  value="$(configured)"
+  target_resolved="$(resolved "$value")"
+  installed raycast && r=true || r=false
+  installed tinycast && t=true || t=false
+  installed alfred && a=true || a=false
+  installed omniwm && o=true || o=false
+  omniwm_active && active=true || active=false
+  case "$target_resolved" in
+    omniwm) [ "$active" = true ] && available=true || available=false ;;
+    raycast) available=$r ;;
+    tinycast) available=$t ;;
+    alfred) available=$a ;;
+    none) available=true ;;
+    *) available=false ;;
+  esac
+
+  if [ "${1:-}" = --json ]; then
+    printf '{"configured":"%s","resolved":"%s","available":%s,"omniwmActive":%s,"installed":{"raycast":%s,"tinycast":%s,"alfred":%s,"omniwm":%s}}\n' \
+      "$value" "$target_resolved" "$available" "$active" "$r" "$t" "$a" "$o"
+    return 0
+  fi
+
+  printf 'launcher:    %s\n' "$value"
+  printf 'resolves to: %s\n' "$target_resolved"
+  printf 'available:   %s\n' "$([ "$available" = true ] && echo yes || echo no)"
+  printf 'installed:   raycast=%s tinycast=%s alfred=%s omniwm=%s\n' \
+    "$([ "$r" = true ] && echo yes || echo no)" \
+    "$([ "$t" = true ] && echo yes || echo no)" \
+    "$([ "$a" = true ] && echo yes || echo no)" \
+    "$([ "$o" = true ] && echo yes || echo no)"
+  printf 'omniwm:      %s\n' "$([ "$active" = true ] && echo running || echo stopped)"
+}
+
+patch_aerospace() {
+  local value=$1 line
+  [ -f "$AERO" ] || return 0
+  line="cmd-ctrl-alt-space = 'exec-and-forget \$HOME/.local/bin/omacosy-launcher'"
+
+  if [ "$value" = none ]; then
+    grep -q '^cmd-ctrl-alt-space = ' "$AERO" || return 0
+    if grep -Eq '^cmd-ctrl-alt-space = .*(omacosy-launcher|open -a Raycast|open-command-palette)' "$AERO"; then
+      sed -i '' -E '/^cmd-ctrl-alt-space = .*(omacosy-launcher|open -a Raycast|open-command-palette)/d' "$AERO"
+    else
+      echo "omacosy-launcher: left your own cmd-ctrl-alt-space binding alone" >&2
+    fi
+    return 0
+  fi
+
+  if grep -q '^cmd-ctrl-alt-space = ' "$AERO"; then
+    if grep -Eq '^cmd-ctrl-alt-space = .*(omacosy-launcher|open -a Raycast|open-command-palette)' "$AERO"; then
+      sed -i '' -E "s|^cmd-ctrl-alt-space = .*|$line|" "$AERO"
+    else
+      echo "omacosy-launcher: left your own cmd-ctrl-alt-space binding alone" >&2
+    fi
+    return 0
+  fi
+
+  local anchor
+  for anchor in cmd-ctrl-alt-shift-enter cmd-ctrl-alt-enter; do
+    grep -q "^$anchor = " "$AERO" || continue
+    awk -v line="$line" -v pat="^$anchor = " '
+      { print }
+      $0 ~ pat && !done { print line; done = 1 }
+    ' "$AERO" > "$AERO.omacosy.tmp" && mv -f "$AERO.omacosy.tmp" "$AERO"
+    return 0
+  done
+  echo "omacosy-launcher: no anchor in $AERO to insert the launcher chord" >&2
+}
+
+write_choice() {
+  local value=$1 self repo local_conf
+  mkdir -p "$(dirname "$APPS")"
+  if [ -f "$APPS" ]; then
+    if grep -q '^LAUNCHER=' "$APPS"; then
+      sed -i '' -E "s|^LAUNCHER=.*|LAUNCHER=\"$value\"|" "$APPS"
+    else
+      printf 'LAUNCHER="%s"\n' "$value" >> "$APPS"
+    fi
+  else
+    printf 'LAUNCHER="%s"\n' "$value" > "$APPS"
+  fi
+
+  self="$(readlink "$HOME/.local/bin/omacosy-launcher" 2>/dev/null || printf '%s' "$0")"
+  repo="$(cd "$(dirname "$self")/.." 2>/dev/null && pwd || true)"
+  local_conf="$repo/config/apps.local.conf"
+  if [ -n "$repo" ] && [ -d "$repo/config" ] && [ -w "$repo/config" ]; then
+    touch "$local_conf" 2>/dev/null || true
+    if [ -f "$local_conf" ]; then
+      if grep -q '^LAUNCHER=' "$local_conf"; then
+        sed -i '' -E "s|^LAUNCHER=.*|LAUNCHER=$value|" "$local_conf"
+      else
+        printf 'LAUNCHER=%s\n' "$value" >> "$local_conf"
+      fi
+    fi
+  fi
+}
+
+set_launcher() {
+  local value=$1 kara
+  valid "$value" || {
+    echo "omacosy-launcher: expected auto|raycast|tinycast|alfred|omniwm|none" >&2
+    exit 2
+  }
+  if [ "$value" = omniwm ] && ! omniwm_active; then
+    echo "omacosy-launcher: OmniWM's launcher is only available while OmniWM is the window manager" >&2
+    echo "  use auto, raycast, tinycast, alfred or none here" >&2
+    exit 2
+  fi
+
+  write_choice "$value"
+  patch_aerospace "$value"
+
+  if omniwm_active; then
+    kara="$KARA"
+    [ -x "$kara" ] || kara="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/bin/omacosy-karabiner-omniwm"
+    [ -x "$kara" ] && "$kara" install >/dev/null 2>&1 \
+      || echo "omacosy-launcher: could not refresh the OmniWM Karabiner rules" >&2
+  fi
+
+  case "$value" in
+    raycast | tinycast | alfred)
+      installed "$value" || echo "omacosy-launcher: $value is not installed; Super+Space will fall back" >&2
+      ;;
+    omniwm) ;;
+  esac
+  printf 'launcher: %s\n' "$value"
+}
+
+case "${1:-}" in
+  '') open_launcher ;;
+  status) status "${2:-}" ;;
+  set)
+    [ "$#" -eq 2 ] || {
+      echo 'usage: omacosy-launcher set auto|raycast|tinycast|alfred|omniwm|none' >&2
+      exit 2
+    }
+    set_launcher "$2"
+    ;;
+  -h | --help | help)
+    sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    echo 'usage: omacosy-launcher [status [--json] | set auto|raycast|tinycast|alfred|omniwm|none]' >&2
+    exit 2
+    ;;
+esac

@@ -1523,7 +1523,10 @@ func calendarRows() -> [PopupRow] {
     let title = DateFormatter()
     title.dateFormat = "MMMM yyyy"
     rows.append(PopupRow(text: title.string(from: now).lowercased(), hero: true))
-    rows.append(PopupRow(text: "mo tu we th fr sa su", dim: true))
+    // header and weeks share one font and one leading marker column, so
+    // the monospace columns line up (a dim row is a point smaller, and an
+    // icon column's width follows its glyph's ink)
+    rows.append(PopupRow(text: "  mo tu we th fr sa su"))
 
     guard let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: now)),
           let range = cal.range(of: .day, in: .month, for: now) else { return rows }
@@ -1543,7 +1546,7 @@ func calendarRows() -> [PopupRow] {
         let slice = cells[week..<min(week + 7, cells.count)]
         let text = slice.map { String(format: "%2d", $0.0) }.joined(separator: " ")
         let hasToday = slice.contains { $0.0 == today && $0.1 }
-        rows.append(PopupRow(icon: hasToday ? "▸" : " ", text: text, highlight: hasToday))
+        rows.append(PopupRow(text: (hasToday ? "▸ " : "  ") + text, highlight: hasToday))
     }
     let week = cal.component(.weekOfYear, from: now)
     rows.append(PopupRow(text: "week \(week)", dim: true))

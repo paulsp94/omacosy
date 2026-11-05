@@ -3008,8 +3008,12 @@ func screenID(_ screen: NSScreen) -> CGDirectDisplayID {
 // renders as the last set the bar knew, stale and silent.
 func monitorIDs() -> [String: String] { // display name -> WM monitor id
     // OmniWM names monitors with NSScreen.localizedName (Monitor.current()
-    // in its source), so the same name join works; its ids stay opaque
-    // ("display:…") and only ever meet the query payloads they came from.
+    // in its source), which is the join whenever both sides agree on the
+    // language. They need not: this bundle has no .lproj, so AppKit hands
+    // the bar English names while OmniWM answers in the system language,
+    // and every workspace pill stayed empty on a French Mac. rebuildSurfaces
+    // therefore falls back to the language-free display number; the ids stay
+    // opaque ("display:…") and only ever meet the payloads they came from.
     if omniwmActive() {
         var map: [String: String] = [:]
         if let list = omniQuery("displays", ["--fields", "id,name"])?["displays"]
@@ -3037,12 +3041,26 @@ func unresolvedID(_ screen: NSScreen) -> String { "unresolved:\(screenID(screen)
 // display the manager does not list (not up yet, a login, a switch) is
 // unresolved: its workspace pills stay empty rather than show another
 // manager's state. reconcile() below asks again.
+// The manager labels a display with its name, which is LOCALIZED, and the two
+// processes need not agree on it: measured on a French Mac, this bar (a bundle
+// with no .lproj, so AppKit falls back to English) sees "Built-in Retina
+// Display" while OmniWM answers "Écran Retina intégré". Matching on that string
+// left every workspace pill empty and the log saying "display unresolved"
+// forever. The display NUMBER is language-free, and OmniWM publishes it as
+// "display:<CGDirectDisplayID>", which is exactly NSScreenNumber; fall back to
+// it whenever the name does not match.
+func wmDisplayID(_ screen: NSScreen, _ ids: [String: String]) -> String? {
+    if let byName = ids[screen.localizedName] { return byName }
+    let byNumber = "display:\(screenID(screen))"
+    return ids.values.contains(byNumber) ? byNumber : nil
+}
+
 func rebuildSurfaces(_ ids: [String: String]) {
     let wm = labelsFromOmniWM ? "omniwm" : "aerospace"
     var kept: [BarSurface] = []
     for screen in NSScreen.screens {
         let existing = surfaces.first(where: { screenID($0.screen) == screenID(screen) })
-        let id = ids[screen.localizedName] ?? unresolvedID(screen)
+        let id = wmDisplayID(screen, ids) ?? unresolvedID(screen)
         let label = id.hasPrefix("unresolved:") ? "no window manager yet" : "\(wm) monitor \(id)"
         if let existing {
             if existing.monitorID != id {

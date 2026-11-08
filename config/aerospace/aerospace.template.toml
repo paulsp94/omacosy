@@ -99,8 +99,9 @@ cmd-ctrl-alt-enter = 'exec-and-forget $HOME/.local/bin/omacosy-spawn "@TERMINAL@
 # browser unless BROWSER names one, and resolves that at press time
 cmd-ctrl-alt-shift-enter = 'exec-and-forget $HOME/.local/bin/omacosy-browser'
 
-# Launcher (omarchy: Super+Space)
-cmd-ctrl-alt-space = 'exec-and-forget open -a Raycast'
+# Launcher (omarchy: Super+Space) — the chosen launcher, set with
+# LAUNCHER in apps.conf or `omacosy-launcher set`. none removes this line.
+cmd-ctrl-alt-space = 'exec-and-forget $HOME/.local/bin/omacosy-launcher'
 
 # Close window (omarchy: Super+W)
 cmd-ctrl-alt-w = 'close'

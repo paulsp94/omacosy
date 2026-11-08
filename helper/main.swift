@@ -32,6 +32,9 @@
 //   bt connect <address> / bt disconnect <address>
 //   input-age               seconds since the last deliberate user input
 //                           (keys/clicks/scroll), for the focus guard
+//   window-exists <owner>   succeed when an on-screen window owned by <owner>
+//                           looks like a launcher panel (above layer 0 and
+//                           wider than a status item)
 //   brightness              print the built-in display's brightness (0-100)
 //   brightness set <0-100>  set it (DisplayServices — built-in/Apple
 //                           displays only; external DDC is out of scope)
@@ -775,6 +778,25 @@ case "bt":
         fail("usage: bt power [on|off|toggle] | bt devices | bt connect <addr> | bt disconnect <addr>")
     }
 
+case "window-exists":
+    // The launcher toggle reads this before deciding open vs close. A
+    // status item is narrow and a hidden palette is not on screen; the
+    // palette is the wide, on-screen window above layer 0.
+    guard args.count > 2 else { fail("usage: window-exists <owner>") }
+    let owner = args[2]
+    let list = (CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+    let found = list.contains { w in
+        guard let o = w[kCGWindowOwnerName as String] as? String,
+            o.caseInsensitiveCompare(owner) == .orderedSame,
+            let layer = w[kCGWindowLayer as String] as? Int, layer > 0,
+            let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+            let width = b["Width"], let height = b["Height"]
+        else { return false }
+        return width > 200 && height > 40
+    }
+    exit(found ? 0 : 1)
+
 default:
-    fail("usage: omacosy-helper cursor | displays | default-browser | default-app <scheme> | wallpaper <path> | audio ... | bt ... | brightness [set <0-100>] | input-age")
+    fail("usage: omacosy-helper cursor | displays | default-browser | default-app <scheme> | wallpaper <path> | audio ... | bt ... | brightness [set <0-100>] | input-age | window-exists <owner>")
 }

@@ -23,10 +23,10 @@ MARK="omacosy-omniwm"                     # rule-description prefix, removal key
 
 [ -f "$KARABINER" ] || { echo "no karabiner.json" >&2; exit 1; }
 
-TERMINAL=Ghostty BROWSER= MUSIC=Spotify MESSENGER=Slack
+TERMINAL=Ghostty BROWSER= MUSIC=Spotify MESSENGER=Slack LAUNCHER=auto
 [ -f "$APPS" ] && . "$APPS" 2>/dev/null
 
-export KARABINER MARK TERMINAL BROWSER MUSIC MESSENGER
+export KARABINER MARK TERMINAL BROWSER MUSIC MESSENGER LAUNCHER
 python3 - "$1" <<'PY'
 import json, os, shutil, sys
 
@@ -62,6 +62,7 @@ SUPER = ["command", "control", "option"]
 SHIFT = SUPER + ["shift"]
 home = os.environ["HOME"]
 apps = {k: os.environ[k] for k in ("TERMINAL", "BROWSER", "MUSIC", "MESSENGER")}
+launcher = os.environ.get("LAUNCHER", "auto")
 
 # workspace slots: OmniWM's native switchWorkspace.N is name-global
 # (always the main set), blind to which screen you are on — these route
@@ -78,9 +79,10 @@ rules = slot_rules + [
     # bursts — a bare `open -na` gives OmniWM's above-not-below spiral
     rule("terminal", "return_or_enter", SUPER, cmd=f"{home}/.local/bin/omacosy-spawn '{apps['TERMINAL']}'"),
     rule("browser", "return_or_enter", SHIFT, cmd=f"{home}/.local/bin/omacosy-browser"),
-    # trial: OmniWM's command palette on the launcher chord (Raycast
-    # parked — swap the two lines to go back)
-    rule("launcher", "spacebar", SUPER, cmd="/opt/homebrew/bin/omniwmctl command open-command-palette >/dev/null 2>&1"),
+    # LAUNCHER=none leaves Super+Space unbound: no rule at all, so the
+    # chord is free rather than a shell command that does nothing.
+    *([rule("launcher", "spacebar", SUPER, cmd=f"{home}/.local/bin/omacosy-launcher")]
+      if launcher != "none" else []),
     rule("overview", "o", SUPER, cmd=f"{home}/.local/bin/omacosy-overview"),
     # aerospace-era throws: to the OTHER monitor, not a direction —
     # resolved per-press by omacosy-omni from the display arrangement

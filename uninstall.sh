@@ -121,6 +121,7 @@ if [ -f "$MANIFEST" ] && grep -q '^default ' "$MANIFEST"; then
   done < <(grep '^default ' "$MANIFEST")
 else
   defaults delete NSGlobalDomain _HIHideMenuBar 2>/dev/null || true
+  defaults delete NSGlobalDomain AppleMenuBarVisibleInFullscreen 2>/dev/null || true
   defaults write com.apple.AppleMultitouchTrackpad TrackpadFourFingerVertSwipeGesture -int 2
   defaults write com.apple.AppleMultitouchTrackpad TrackpadFourFingerHorizSwipeGesture -int 2
   defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadFourFingerVertSwipeGesture -int 2 2>/dev/null || true
@@ -130,6 +131,22 @@ fi
 killall cfprefsd 2>/dev/null || true
 killall SystemUIServer 2>/dev/null || true
 killall Dock 2>/dev/null || true
+# macOS 27 keeps the installed hide across the restart above until
+# System Events applies "autohide menu bar". Mirror the key just
+# restored: boolean 1 stays hidden, anything else (including a deleted
+# key) shows the bar on the desktop again. Same Automation grant as
+# install; a refusal leaves the keys for the next login.
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 27 ]; then
+  if [ "$(defaults read NSGlobalDomain _HIHideMenuBar 2>/dev/null || true)" = "1" ]; then
+    menu_bar_autohide=true
+  else
+    menu_bar_autohide=false
+  fi
+  if ! osascript -e "tell application \"System Events\" to tell dock preferences to set autohide menu bar to $menu_bar_autohide" >/dev/null; then
+    log "System Events did not apply the restored menu bar."
+    log "  Grant Automation for this terminal, or log out and back in."
+  fi
+fi
 
 # --- 3. Unlink configs, restore backups -------------------------------------
 restore() {

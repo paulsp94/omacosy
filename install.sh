@@ -733,6 +733,7 @@ link "$REPO_DIR/bin/omacosy-spawn" "$HOME/.local/bin/omacosy-spawn"
 link "$REPO_DIR/bin/omacosy-wm-switch" "$HOME/.local/bin/omacosy-wm-switch"
 link "$REPO_DIR/bin/omacosy-karabiner-omniwm" "$HOME/.local/bin/omacosy-karabiner-omniwm"
 link "$REPO_DIR/bin/omacosy-layout" "$HOME/.local/bin/omacosy-layout"
+link "$REPO_DIR/bin/omacosy-omniwm-gaps" "$HOME/.local/bin/omacosy-omniwm-gaps"
 link "$REPO_DIR/bin/omacosy-float" "$HOME/.local/bin/omacosy-float"
 link "$REPO_DIR/bin/omacosy-finder-window" "$HOME/.local/bin/omacosy-finder-window"
 link "$REPO_DIR/bin/omacosy-browser" "$HOME/.local/bin/omacosy-browser"
@@ -905,6 +906,15 @@ elif [ "$WM" = omniwm ]; then
   # rules for the chords that run commands: OmniWM's hotkeys cannot
   "$HOME/.local/bin/omacosy-karabiner-omniwm" install >/dev/null 2>&1 \
     || log "WARNING: could not restore the OmniWM chords; run: omacosy-karabiner-omniwm install"
+  # Per-display top gaps, asked from the strips the bar sizes itself by
+  # (see bin/omacosy-omniwm-gaps). A first install must not wait for the
+  # first replug: the bar asks the same question on every display change
+  # once it is up, but at this point in a FIRST install it either is not
+  # running yet or found no OmniWM to write for. The script is silent and
+  # changes nothing when it has nothing to say; the helper was built
+  # further up, so there is something to ask by now.
+  "$HOME/.local/bin/omacosy-omniwm-gaps" >/dev/null 2>&1 \
+    || log "WARNING: could not size the per-display top gaps; run: omacosy-omniwm-gaps"
 else
   log "Starting AeroSpace (switch to OmniWM with: omacosy-wm-switch omniwm)"
   open -a AeroSpace || log "WARNING: AeroSpace is not installed; see the brew bundle output above"

@@ -577,9 +577,10 @@ falling through to the window beneath. Per-app opt-out lives in
 
 4-finger swipes left/right switch workspaces on the display under the
 cursor (native-Spaces semantics), with wrap-around, on any trackpad.
-The system's own 4-finger gestures are disabled by `macos-defaults.sh`
-so Mission Control never fights the daemon; `uninstall.sh` restores
-them.
+The system's own trackpad swipes (both the three- and four-finger
+gestures) are disabled by `macos-defaults.sh` so Mission Control never
+fights the daemon; `uninstall.sh` and `omacosy-toggle off` restore them
+(macOS may need a log out/in before a trackpad gesture re-arms).
 
 ## Workspace overview
 
@@ -610,7 +611,8 @@ card on an empty chip moves that workspace there instead.
 ## Parking the setup
 
 `omacosy-toggle off` returns to a vanilla Mac in one command (AeroSpace
-stops managing, all daemons and the bar stop) without uninstalling;
+stops managing, all daemons and the bar stop, and the native menu bar
+and 4-finger swipes go back to macOS) without uninstalling;
 `omacosy-toggle on` brings everything back. No argument flips.
 
 ## Memory use

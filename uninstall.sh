@@ -99,34 +99,12 @@ if have "cloned-aerospace-swipe" && [ -d "$HOME/.local/share/aerospace-swipe" ];
 fi
 
 # --- 2. Native menu bar + system gestures back ------------------------------
-# Preferred path: restore each key to its RECORDED pre-omacosy value
-# (type-aware; ABSENT means it was unset). Fallback for pre-manifest
-# installs: hardcoded Apple defaults.
-if [ -f "$MANIFEST" ] && grep -q '^default ' "$MANIFEST"; then
-  while read -r _ domain key type value; do
-    if [ "$type" = "ABSENT" ]; then
-      defaults delete "$domain" "$key" 2>/dev/null || true
-      continue
-    fi
-    # defaults read prints a boolean as 1 or 0, which is how it was
-    # recorded, but defaults write takes only words: 1 printed defaults'
-    # help text and restored nothing
-    if [ "$type" = boolean ]; then
-      case "$value" in 1) value=true ;; 0) value=false ;; esac
-    fi
-    if { [ -z "$value" ] && [ "$type" != string ]; } \
-       || ! defaults write "$domain" "$key" "-$type" "$value" >/dev/null 2>&1; then
-      log "Could not restore $domain $key (recorded: $type '$value'); check it in System Settings"
-    fi
-  done < <(grep '^default ' "$MANIFEST")
-else
-  defaults delete NSGlobalDomain _HIHideMenuBar 2>/dev/null || true
-  defaults write com.apple.AppleMultitouchTrackpad TrackpadFourFingerVertSwipeGesture -int 2
-  defaults write com.apple.AppleMultitouchTrackpad TrackpadFourFingerHorizSwipeGesture -int 2
-  defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadFourFingerVertSwipeGesture -int 2 2>/dev/null || true
-  defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadFourFingerHorizSwipeGesture -int 2 2>/dev/null || true
-  defaults delete com.apple.dock showMissionControlGestureEnabled 2>/dev/null || true
-fi
+# macos-defaults.sh --release owns the restore: each key goes back to its
+# recorded pre-omacosy value, or to macOS's own default when the manifest
+# has no record. It WRITES the value rather than deleting it, because a
+# deleted four-finger key leaves the swipe off until the user toggles it
+# by hand — so an explicit default is what actually gives the swipe back.
+"$REPO_DIR/macos-defaults.sh" --release 2>/dev/null || true
 killall cfprefsd 2>/dev/null || true
 killall SystemUIServer 2>/dev/null || true
 killall Dock 2>/dev/null || true

@@ -16,9 +16,14 @@ mkdir -p "$STATE_DIR"
 
 set_bg() {
   ln -nsf "$1" "$LINK"
+  # the helper verifies each screen actually changed and falls back to
+  # System Events itself (NSWorkspace no-ops silently on macOS 26+);
+  # non-zero means even that failed, so try osascript as a last resort
+  helper_ok=0
   if [ -x "$HOME/.local/bin/omacosy-helper" ]; then
-    "$HOME/.local/bin/omacosy-helper" wallpaper "$1" >/dev/null 2>&1 || true
-  else
+    "$HOME/.local/bin/omacosy-helper" wallpaper "$1" >/dev/null 2>&1 && helper_ok=1
+  fi
+  if [ "$helper_ok" -eq 0 ]; then
     # argument, not spliced text — a theme is third-party content and a
     # crafted filename could otherwise close the AppleScript string
     osascript - "$1" >/dev/null 2>&1 <<'APPLESCRIPT' || true

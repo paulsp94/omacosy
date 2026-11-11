@@ -41,18 +41,22 @@ if [ -f "$KORREN_CFG" ]; then
 fi
 
 # Wallpaper: first image in the theme's backgrounds/ dir, on every screen.
-# omacosy-helper wraps NSWorkspace (System Events wallpaper scripting
-# half-broke on macOS 14+: some desktops return "missing value" and
-# silently keep the old picture); osascript remains as fallback.
+# omacosy-helper wraps NSWorkspace and verifies the set with a per-screen
+# read-back — on macOS 26+ the API returns success while silently keeping
+# the old picture — falling back to System Events desktop scripting, the
+# path that still lands. If even that fails the helper exits non-zero and
+# osascript runs here as the last resort.
 WALL="$(ls "$THEMES_DIR/$NAME"/backgrounds/* 2>/dev/null | head -1)"
 if [ -n "$WALL" ]; then
   # theme-bg-next cycles through the rest; a theme switch restarts the
   # cycle at the first image, so the remembered position moves with it
   mkdir -p "$HOME/.local/state/omacosy"
   ln -nsf "$WALL" "$HOME/.local/state/omacosy/background"
+  helper_ok=0
   if [ -x "$HOME/.local/bin/omacosy-helper" ]; then
-    "$HOME/.local/bin/omacosy-helper" wallpaper "$WALL" >/dev/null 2>&1 || true
-  else
+    "$HOME/.local/bin/omacosy-helper" wallpaper "$WALL" >/dev/null 2>&1 && helper_ok=1
+  fi
+  if [ "$helper_ok" -eq 0 ]; then
     # the path is an ARGUMENT, not spliced into the script text: it is a
     # filename out of a theme pack, and a theme is third-party content.
     # A wallpaper named  x" & (do shell script "...") & ".jpg  would

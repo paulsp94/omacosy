@@ -15,6 +15,11 @@
 //                           bar-height follows the main display only, and
 //                           a notched built-in's strip is taller; fails
 //                           with no external up
+//   bar-heights             EVERY display on one line: "displayUUID<TAB>
+//                           strip<TAB>localizedName" — the per-display
+//                           form bar-height-external takes to one answer;
+//                           omacosy-omniwm-gaps sizes each monitor's top
+//                           gap from it
 //   safe-top                the built-in display's notch inset in points
 //                           (0 = no notch); install.sh sizes the top gap
 //                           from it
@@ -70,6 +75,62 @@ func builtinDisplayID() -> CGDirectDisplayID {
         return ids[i]
     }
     return CGMainDisplayID()
+}
+
+func screenID(_ screen: NSScreen) -> CGDirectDisplayID {
+    (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+}
+
+// Height of the menu-bar strip THIS display draws, in points; nil when no
+// strip could be matched to it. NSMenu's menuBarHeight answers only the
+// MAIN display, and a notched built-in's strip is taller than any
+// external's; the Window Server keeps one Menubar window PER display, at
+// that display's own strip height, and keeps it in the window list even
+// while the bar is auto-hidden (slid just off the top edge), which is the
+// state macos-defaults.sh puts the menu bar in — so the strip is there to
+// be read. Match a window to the screen by x and width and its edge at the
+// display top. The window NAME is not used: kCGWindowName needs Screen
+// Recording, and the strip's layer plus one of its two known owners is
+// enough to pick it out. bar.swift keeps the same read to size each bar
+// window; change one, change the other.
+func menuBarHeight(for screen: NSScreen) -> CGFloat? {
+    let primaryH = NSScreen.screens.first?.frame.height ?? 0
+    let topY = primaryH - screen.frame.maxY // the display's top edge, CG space
+    let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+    guard let list = CGWindowListCopyWindowInfo([], kCGNullWindowID)
+        as? [[String: Any]] else { return nil }
+    var agentHeight: CGFloat = 0 // MenuBarAgent's answer, used if the server's is absent
+    for w in list {
+        guard (w[kCGWindowLayer as String] as? Int) == menuLevel,
+              let owner = w[kCGWindowOwnerName as String] as? String,
+              owner == "Window Server" || owner == "MenuBarAgent",
+              let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = b["X"], let y = b["Y"], let width = b["Width"],
+              let height = b["Height"], height > 0,
+              height < screen.frame.height / 4 // a strip, not a stray window
+        else { continue }
+        // the strip touches the display's top edge whether auto-hidden
+        // (slid just above it), shown (just below), or mid-slide
+        if abs(x - screen.frame.minX) < 2, abs(width - screen.frame.width) < 2,
+           y <= topY + 2, y + height >= topY - 2 {
+            if owner == "Window Server" { return height }
+            if agentHeight == 0 { agentHeight = height }
+        }
+    }
+    return agentHeight > 0 ? agentHeight : nil
+}
+
+// The display's stable UUID — the identity OmniWM matches its per-monitor
+// settings with first, and the value its Monitor.displayUUID carries (both
+// come from the window server, keyed by display id). Private but stable
+// since 10.6; the linker name carries no underscore.
+@_silgen_name("CGDisplayCreateUUIDFromDisplayID")
+func CGDisplayCreateUUIDFromDisplayID(_ display: UInt32) -> Unmanaged<CFUUID>?
+
+func displayUUID(_ display: CGDirectDisplayID) -> String? {
+    guard let cf = CGDisplayCreateUUIDFromDisplayID(display)?.takeRetainedValue()
+    else { return nil }
+    return CFUUIDCreateString(nil, cf) as String
 }
 
 func fail(_ msg: String) -> Never {
@@ -214,43 +275,31 @@ case "bar-height-external":
     // the read above reports only the MAIN display's strip, and a notched
     // built-in's strip is taller than any external's. install.sh sizes the
     // external monitor's top gap with this, so the gap follows the bar the
-    // external actually draws. The Window Server keeps one Menubar window
-    // per display at that display's strip height, listed even while the
-    // bar is auto-hidden (slid just off the top edge); match one to the
-    // external screen by x/width and its edge at the display top. Prints
-    // nothing and fails when no external is up, which is install.sh's
-    // signal to keep the main-display value. The window NAME is not used:
-    // kCGWindowName needs Screen Recording; the strip's layer plus one of
-    // its two known owners is enough to pick it out.
+    // external actually draws. Prints nothing and fails when no external is
+    // up to be asked, which is install.sh's signal to keep the main-display
+    // value.
     let builtin = builtinDisplayID()
-    guard let ext = NSScreen.screens.first(where: {
-        (($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
-            ?? 0) != builtin
-    }) else { exit(1) }
-    let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    let topY = primaryH - ext.frame.maxY
-    let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
-    let list = (CGWindowListCopyWindowInfo([], kCGNullWindowID) as? [[String: Any]]) ?? []
-    var agentHeight: CGFloat = 0
-    for w in list {
-        guard (w[kCGWindowLayer as String] as? Int) == menuLevel,
-              let owner = w[kCGWindowOwnerName as String] as? String,
-              owner == "Window Server" || owner == "MenuBarAgent",
-              let b = w[kCGWindowBounds as String] as? [String: CGFloat],
-              let x = b["X"], let y = b["Y"], let width = b["Width"],
-              let height = b["Height"], height > 0,
-              height < ext.frame.height / 4
-        else { continue }
-        // the strip touches the display's top edge whether auto-hidden
-        // (slid just above it), shown (just below), or mid-slide
-        if abs(x - ext.frame.minX) < 2, abs(width - ext.frame.width) < 2,
-           y <= topY + 2, y + height >= topY - 2 {
-            if owner == "Window Server" { print(Int(height.rounded())); exit(0) }
-            if agentHeight == 0 { agentHeight = height }
-        }
+    guard let ext = NSScreen.screens.first(where: { screenID($0) != builtin }),
+          let h = menuBarHeight(for: ext)
+    else { exit(1) }
+    print(Int(h.rounded()))
+
+case "bar-heights":
+    // EVERY display on one line each — the per-display form the two reads
+    // above take to one answer: "displayUUID<TAB>strip<TAB>localizedName".
+    // omacosy-omniwm-gaps sizes each monitor's top gap from this and keys
+    // the per-monitor overrides with the UUID, the identity OmniWM matches
+    // per-monitor settings with first (its Monitor.displayUUID is the same
+    // CoreGraphics/SkyLight value). A display whose strip cannot be
+    // matched prints the main display's menuBarHeight in its place — the
+    // fallback the bar itself uses — so every line carries a usable number.
+    if NSApplication.shared.mainMenu == nil { NSApplication.shared.mainMenu = NSMenu() }
+    let fallback = NSApplication.shared.mainMenu?.menuBarHeight ?? 34
+    for screen in NSScreen.screens {
+        guard let uuid = displayUUID(screenID(screen)) else { continue }
+        let h = (menuBarHeight(for: screen) ?? fallback).rounded()
+        print("\(uuid)\t\(Int(h))\t\(screen.localizedName)")
     }
-    if agentHeight > 0 { print(Int(agentHeight.rounded())); exit(0) }
-    exit(1)
 
 case "safe-top":
     // A notched display reports usable space starting below the camera

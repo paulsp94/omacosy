@@ -1077,6 +1077,15 @@ final class BluetoothWatcher: NSObject, CBCentralManagerDelegate {
         DispatchQueue.main.async { updateBluetooth() }
     }
 
+    // the popup's connect goes through openConnection(target), which
+    // returns at once and calls back here; the plain openConnection()
+    // blocks the main thread until the page times out, and a device out
+    // of range froze the whole bar for that long
+    @objc func connectionComplete(_ device: IOBluetoothDevice, status: IOReturn) {
+        updateBluetooth()
+        if openPopup == "bluetooth" { refreshPopup() }
+    }
+
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if CBCentralManager.authorization == .allowedAlways { startClassic() }
         DispatchQueue.main.async { updateBluetooth() }
@@ -1700,7 +1709,7 @@ func bluetoothRows() -> [PopupRow] {
         rows.append(PopupRow(icon: device.isConnected() ? "󰂱" : "󰂯", text: name,
                              highlight: device.isConnected(),
                              action: {
-                                 if device.isConnected() { device.closeConnection() } else { device.openConnection() }
+                                 if device.isConnected() { device.closeConnection() } else { device.openConnection(bluetoothWatcher) }
                                  updateBluetooth()
                                  refreshPopup()
                              }))

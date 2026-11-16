@@ -5,3 +5,10 @@
 /omacosy-ffm.app/
 config/apps.local.conf
 config/aerospace/aerospace.toml
+# config/omniwm/ is symlinked to the live OmniWM config directory, and the
+# app writes there as it runs: settings.toml.pre-v<N> on each schema
+# migration (0.8.0 wrote pre-v5), shell/ since 0.8.0, and whatever it adds
+# next. Ignore the directory and allow-list only the file this repo ships,
+# so a new OmniWM release cannot dirty the tree.
+config/omniwm/*
+!config/omniwm/settings.toml

@@ -18,7 +18,10 @@
 //   safe-top                the built-in display's notch inset in points
 //                           (0 = no notch); install.sh sizes the top gap
 //                           from it
-//   wallpaper <path>        set the desktop picture on every screen
+//   wallpaper <path>        set the desktop picture on every screen,
+//                           verified by read-back (NSWorkspace no-ops
+//                           silently on macOS 26+); falls back to System
+//                           Events desktop scripting
 //   wallpaper resync        put the recorded picture back on any screen
 //                           that shows an older omacosy picture
 //   audio list              output devices: "*<TAB>name" (current) / "-<TAB>name"
@@ -97,6 +100,84 @@ func ownedWallpaperRoots() -> [String] {
 func isOwnedWallpaper(_ url: URL, _ roots: [String]) -> Bool {
     let paths = [url.path, url.resolvingSymlinksInPath().path]
     return paths.contains { p in roots.contains { p.hasPrefix($0 + "/") } }
+}
+
+// A set that works can still take a moment to report back through
+// desktopImageURL; poll before concluding it silently failed.
+func waitFor(_ settled: () -> Bool, budgetMs: Int) -> Bool {
+    var waited = 0
+    while !settled() {
+        if waited >= budgetMs { return false }
+        usleep(75_000); waited += 75
+    }
+    return true
+}
+
+// Do all screens show `url`? Compare resolved paths, so every spelling of
+// the file (through a symlink, under themes/, under the current-theme
+// link) matches. On macOS 26+ setDesktopImageURL can return success and
+// silently keep the old picture, so this read-back — not the throw — is
+// the real check that a set landed.
+func screensShow(_ url: URL) -> Bool {
+    let want = url.resolvingSymlinksInPath().path
+    return NSScreen.screens.allSatisfy {
+        NSWorkspace.shared.desktopImageURL(for: $0)?.resolvingSymlinksInPath().path == want
+    }
+}
+
+// Screens still showing an older omacosy picture — what `resync` means
+// to fix. A picture the user picked in System Settings is not stale.
+func staleScreens(_ url: URL, _ roots: [String]) -> [NSScreen] {
+    NSScreen.screens.filter {
+        guard let now = NSWorkspace.shared.desktopImageURL(for: $0),
+              now.resolvingSymlinksInPath().path != url.path else { return false }
+        return isOwnedWallpaper(now, roots)
+    }
+}
+
+// Set the picture through System Events desktop scripting instead — the
+// path that still lands where NSWorkspace silently no-ops. The path (and,
+// for resync, the owned roots) come in as ARGUMENTS, never spliced into
+// the script text: a theme is third-party content and a crafted filename
+// must not be able to close an AppleScript string.
+@discardableResult
+func setWallpaperViaSystemEvents(_ path: String, ownedRoots: [String] = []) -> Bool {
+    let script = ownedRoots.isEmpty ? """
+        on run argv
+          tell application "System Events" to tell every desktop to set picture to (item 1 of argv)
+        end run
+        """ : """
+        on run argv
+          set pic to item 1 of argv
+          tell application "System Events"
+            repeat with d in every desktop
+              try
+                set cur to picture of d
+                if cur is not pic then
+                  repeat with i from 2 to (count of argv)
+                    if (cur as text) starts with ((item i of argv) as text) & "/" then
+                      set picture of d to pic
+                      exit repeat
+                    end if
+                  end repeat
+                end if
+              end try
+            end repeat
+          end tell
+        end run
+        """
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    proc.arguments = ["-", path] + ownedRoots
+    let stdin = Pipe()
+    proc.standardInput = stdin
+    proc.standardOutput = FileHandle.nullDevice
+    proc.standardError = FileHandle.nullDevice
+    do { try proc.run() } catch { return false }
+    stdin.fileHandleForWriting.write(script.data(using: .utf8)!)
+    try? stdin.fileHandleForWriting.close()
+    proc.waitUntilExit()
+    return proc.terminationStatus == 0
 }
 
 // --- CoreAudio ---------------------------------------------------------
@@ -299,29 +380,58 @@ case "wallpaper":
             fail("wallpaper resync: nothing recorded at \(link)")
         }
         let roots = ownedWallpaperRoots()
-        var failures = 0, changed = 0, kept = 0
+        let want = url.resolvingSymlinksInPath().path
+        // Screens that SHOULD change: not already showing the picture, and
+        // showing an omacosy one. A picture chosen in System Settings is
+        // left alone, so it counts as neither.
+        var stale = 0, kept = 0
         for screen in NSScreen.screens {
-            // Skip a screen that already has it. Re-setting the picture
-            // macOS is already showing costs a visible redraw.
             guard let now = NSWorkspace.shared.desktopImageURL(for: screen),
-                  now.resolvingSymlinksInPath().path != url.path else { continue }
-            guard isOwnedWallpaper(now, roots) else { kept += 1; continue }
-            do {
-                try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
-                changed += 1
-            } catch { failures += 1 }
+                  now.resolvingSymlinksInPath().path != want else { continue }
+            if isOwnedWallpaper(now, roots) { stale += 1 } else { kept += 1 }
         }
-        print("wallpaper resync: \(changed) of \(NSScreen.screens.count) screen(s) reset to \(url.path)"
+        var failed = false, viaEvents = false
+        if stale > 0 {
+            for screen in NSScreen.screens {
+                guard let now = NSWorkspace.shared.desktopImageURL(for: screen),
+                      now.resolvingSymlinksInPath().path != want,
+                      isOwnedWallpaper(now, roots) else { continue }
+                // Re-setting a screen that already has it costs a visible redraw.
+                do { try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:]) }
+                catch { failed = true }
+            }
+            // Same silent no-op as `wallpaper <path>`: trust the read-back,
+            // and fall back to System Events, which still lands. The roots
+            // argument makes that path skip a hand-picked picture too.
+            if !waitFor({ staleScreens(url, roots).isEmpty }, budgetMs: 750) {
+                viaEvents = true
+                setWallpaperViaSystemEvents(url.path, ownedRoots: roots)
+                failed = !waitFor({ staleScreens(url, roots).isEmpty }, budgetMs: 3000)
+            }
+        }
+        print("wallpaper resync: "
+              + (stale == 0 ? "all \(NSScreen.screens.count) screen(s) already on \(url.path)"
+                            : failed ? "FAILED to reset \(stale) of \(NSScreen.screens.count) screen(s)"
+                                     : "\(stale) of \(NSScreen.screens.count) screen(s) reset to \(url.path)")
+              + (viaEvents && stale > 0 ? " (via System Events)" : "")
               + (kept > 0 ? ", \(kept) kept (not an omacosy picture)" : ""))
-        exit(failures == 0 ? 0 : 1)
+        exit(failed ? 1 : 0)
     }
     let url = URL(fileURLWithPath: args[2])
-    var failures = 0
     for screen in NSScreen.screens {
-        do { try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:]) }
-        catch { failures += 1 }
+        // Errors are not counted here: on this macOS a successful throw and a
+        // failed one are indistinguishable from the picture's point of view.
+        // The read-back below is the check that decides the exit code.
+        try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
     }
-    exit(failures == 0 ? 0 : 1)
+    if !waitFor({ screensShow(url) }, budgetMs: 750) {
+        // At least one screen silently kept its old picture — the System
+        // Events path does land here.
+        setWallpaperViaSystemEvents(url.path)
+        if !waitFor({ screensShow(url) }, budgetMs: 3000) {
+            fail("wallpaper: no screen could be set to \(url.path)")
+        }
+    }
 
 case "nightshift":
     // CBBlueLightClient (private CoreBrightness) — what Control Center

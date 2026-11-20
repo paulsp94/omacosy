@@ -447,6 +447,40 @@ func ringedWindowGone() -> Bool {
     return leaving(w)
 }
 
+// The ring is a single overlay above every normal window, so when a
+// layer-0 window sits IN FRONT of the focused one (a float over a tile,
+// e.g. System Settings over the full-display tile) the ring would paint
+// across that float. The marked window is hidden anyway, so report it
+// covered and the caller hides the ring.
+//
+// Only the stroke band matters: a small panel floating in the middle of
+// the tile never reaches the border and the ring should stay. `outer` is
+// the ring overlay's frame, `inner` the hole inside the stroke; a cover
+// that reaches the band (intersects outer, not wholly inside inner) is
+// one the ring would draw over. Layer 0 only — LanguageTool and Clop sit
+// at layer 3 spanning the whole screen, and counting those would hide
+// the ring always. Front-to-back list, so stop at the focused window.
+func coveredByWindowInFront(_ wid: UInt32, _ frame: CGRect) -> Bool {
+    guard wid != 0,
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID) as? [[String: Any]] else { return false }
+    let outer = frame.insetBy(dx: -(conf.width + conf.gap), dy: -(conf.width + conf.gap))
+    let inner = frame.insetBy(dx: -conf.gap, dy: -conf.gap)
+    for w in list {
+        guard let n = w["kCGWindowNumber"] as? Int else { continue }
+        if UInt32(n) == wid { return false }
+        guard (w["kCGWindowLayer"] as? Int) == 0,
+            ((w["kCGWindowOwnerPID"] as? pid_t) ?? 0) != getpid(),
+            let b = w["kCGWindowBounds"] as? [String: Any],
+            let x = b["X"] as? CGFloat, let y = b["Y"] as? CGFloat,
+            let wd = b["Width"] as? CGFloat, let ht = b["Height"] as? CGFloat
+        else { continue }
+        let rect = CGRect(x: x, y: y, width: wd, height: ht)
+        if rect.intersects(outer), !inner.contains(rect) { return true }
+    }
+    return false
+}
+
 // Storm handling (drags fire ~90 events/s): tick SYNCHRONOUSLY on the
 // event, capped at 250Hz. Anything scheduler-based here is a trap —
 // asyncAfter's main-queue slop stretched a "16ms" coalescing window
@@ -570,6 +604,14 @@ func tick() {
             recheck(after: stableFor - held + 0.01)
             return
         }
+    }
+    // A layer-0 window in front of the focused one (a float over the
+    // tile): the ring would paint across that float while marking a
+    // window it hides. Drop it; the heartbeat re-checks and the ring
+    // returns the moment the covering window moves or closes.
+    if coveredByWindowInFront(lastWid, f) {
+        hideRing("covered")
+        return
     }
     justHid = false
     shownWid = lastWid

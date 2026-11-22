@@ -5,10 +5,15 @@
 /omacosy-ffm.app/
 config/apps.local.conf
 config/aerospace/aerospace.toml
-# config/omniwm/ is symlinked to the live OmniWM config directory, and the
-# app writes there as it runs: settings.toml.pre-v<N> on each schema
-# migration (0.8.0 wrote pre-v5), shell/ since 0.8.0, and whatever it adds
-# next. Ignore the directory and allow-list only the file this repo ships,
-# so a new OmniWM release cannot dirty the tree.
+# OmniWM writes into its live config directory as it runs: settings.toml.pre-v<N>
+# on each schema migration (0.8.0 wrote pre-v5), shell/ since 0.8.0, and whatever
+# it adds next. On a symlink install those writes land in the clone, because
+# config/omniwm links to ~/.config/omniwm. A copy install keeps them in
+# ~/.config/omniwm instead. Ignore the directory and allow-list only the file
+# this repo ships, so a new OmniWM release cannot dirty the tree.
+#
+# Ignored files are expendable: a pull may replace them with no warning, and the
+# omacosy-update note about untracked files no longer covers them. When #43 ships
+# a settings template, add it to the allow-list below.
 config/omniwm/*
 !config/omniwm/settings.toml

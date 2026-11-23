@@ -32,6 +32,11 @@
 //   bt connect <address> / bt disconnect <address>
 //   input-age               seconds since the last deliberate user input
 //                           (keys/clicks/scroll), for the focus guard
+//   window-exists <owner>   succeed when an on-screen window owned by <owner>
+//                           looks like a launcher panel (above layer 0 and
+//                           wider than a status item)
+//   window-dismiss <owner>  close that panel with Escape posted to its own
+//                           process, up to three times, until it is gone
 //   brightness              print the built-in display's brightness (0-100)
 //   brightness set <0-100>  set it (DisplayServices — built-in/Apple
 //                           displays only; external DDC is out of scope)
@@ -154,6 +159,35 @@ func defaultHandler(_ scheme: String) -> String? {
           let bid = Bundle(url: app)?.bundleIdentifier
     else { return nil }
     return bid
+}
+
+// A launcher panel as the toggle sees it: on screen, owned by that name,
+// above layer 0, and bigger than a status item. `window-exists` and
+// `window-dismiss` must agree on the window, or a press would open a panel
+// it just failed to close. The window id is returned too: a panel that was
+// closed and opened again is a new window, and an old dismiss must not
+// touch it.
+func launcherWindows(owner: String) -> [(pid: pid_t, id: CGWindowID)] {
+    let list = (CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+    var out: [(pid: pid_t, id: CGWindowID)] = []
+    for w in list {
+        guard let o = w[kCGWindowOwnerName as String] as? String,
+            o.caseInsensitiveCompare(owner) == .orderedSame,
+            let layer = w[kCGWindowLayer as String] as? Int, layer > 0,
+            let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+            let width = b["Width"], let height = b["Height"],
+            width > 200, height > 40,
+            let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+            let number = w[kCGWindowNumber as String] as? NSNumber
+        else { continue }
+        out.append((pid, number.uint32Value))
+    }
+    return out
+}
+
+func launcherWindow(owner: String) -> (pid: pid_t, id: CGWindowID)? {
+    launcherWindows(owner: owner).first
 }
 
 let args = CommandLine.arguments
@@ -775,6 +809,55 @@ case "bt":
         fail("usage: bt power [on|off|toggle] | bt devices | bt connect <addr> | bt disconnect <addr>")
     }
 
+case "window-exists":
+    // The launcher toggle reads this before deciding open vs close. A
+    // status item is narrow and a hidden palette is not on screen; the
+    // palette is the wide, on-screen window above layer 0.
+    guard args.count > 2 else { fail("usage: window-exists <owner>") }
+    exit(launcherWindow(owner: args[2]) == nil ? 1 : 0)
+
+case "window-dismiss":
+    // Close a launcher's panel without a global key. Escape is posted to
+    // the launcher's own process, so it cannot reach the app in front, and
+    // it does not depend on the launcher's hotkey.
+    //
+    // No event publishes "this panel closed": the launchers keep running
+    // and offer no close notification, so the window list is the only
+    // answer. This is a bounded retry inside one press, not a timer that
+    // runs in the background.
+    //
+    // One launcher can put up several windows at once: Raycast's Actions
+    // panel (Cmd+K) is its own window, with the main panel behind it. Each
+    // Escape closes one layer, so the press follows the next window that
+    // was already here and keeps going. A window that was NOT here at the
+    // start is a fresh open (a second press racing this one), and it is
+    // left alone, exactly like the old pinned-id check.
+    guard args.count > 2 else { fail("usage: window-dismiss <owner>") }
+    let owner = args[2]
+    let start = launcherWindows(owner: owner)
+    guard var target = start.first else { exit(0) }
+    let known = Set(start.map { $0.id })
+    for _ in 0..<4 {
+        let src = CGEventSource(stateID: .privateState)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: 53, keyDown: true)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: 53, keyDown: false)
+        down?.postToPid(target.pid)
+        up?.postToPid(target.pid)
+        // A closing panel stays in the window list while it fades, and
+        // another Escape restarts that fade: Tinycast measured 441 ms for
+        // one Escape and 740 ms for three, 50 ms apart. So wait out a fade
+        // before deciding a second Escape is needed. One Escape closes the
+        // root case, two the query, three a detail screen, four a detail
+        // screen whose Actions panel is also open. No key is sent to a
+        // panel that is already going away.
+        usleep(500_000)
+        let now = launcherWindows(owner: owner)
+        guard let front = now.first else { exit(0) }
+        if !known.contains(front.id) { exit(0) }
+        target = front
+    }
+    exit(1)
+
 default:
-    fail("usage: omacosy-helper cursor | displays | default-browser | default-app <scheme> | wallpaper <path> | audio ... | bt ... | brightness [set <0-100>] | input-age")
+    fail("usage: omacosy-helper cursor | displays | default-browser | default-app <scheme> | wallpaper <path> | audio ... | bt ... | brightness [set <0-100>] | input-age | window-exists <owner> | window-dismiss <owner>")
 }

@@ -4,6 +4,10 @@
 <dict>
   <key>CFBundleIdentifier</key><string>com.omacosy.bar</string>
   <key>CFBundleName</key><string>omacosy-bar</string>
+  <!-- The name a notification banner shows as its sender. Without it macOS
+       says "omacosy-bar"; the product name is Omacosy. -->
+  <key>CFBundleDisplayName</key><string>Omacosy</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <!-- This file is BOTH the section embedded in the binary and the
        bundle's Contents/Info.plist, so the usage strings have one home.
        The bundle is not cosmetic: measured on macOS 26.3, a bundled app

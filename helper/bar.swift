@@ -2972,19 +2972,9 @@ final class BarSurface {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
-        // Below normal windows, where sketchybar's own windows sat. Verified:
-        // the bar still renders there and still receives clicks — AppKit
-        // honours a negative level, and aerospace's outer.top gap keeps
-        // tiled windows off the strip (a tiled window measures y=42 here
-        // against the bar's 0..34).
-        //
-        // This does NOT make the fullscreen check redundant, which was the
-        // hope. On a notched display a fullscreen window starts BELOW the
-        // notch — measured at y=32 — so it cannot cover a bar drawn from
-        // y=0 by z-order alone. Being below windows is still worth it: the
-        // bar can never float over an app, and on a flat display fullscreen
-        // covers it for free.
-        window.level = NSWindow.Level(rawValue: -20)
+        // Just above MenuBarAgent's click-catching strip — see barRestLevel
+        // for why the bar can no longer rest below normal windows.
+        window.level = barRestLevel
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.acceptsMouseMovedEvents = true // tracking areas need the moves
         view = BarView(frame: NSRect(origin: .zero, size: frame.size))
@@ -3177,10 +3167,27 @@ func fullscreenDisplays() -> Set<CGDirectDisplayID> {
 // the screen and the bar comes back, the way the menu bar does. Watching a
 // film and wanting the brightness slider should not mean leaving the film.
 //
-// While revealed the bar has to climb ABOVE the fullscreen window — its
-// resting level of -20 is what hides it in the first place — and it drops
-// back down when the pointer leaves.
-let barBaseLevel = NSWindow.Level(rawValue: -20)
+// While revealed the bar has to climb ABOVE the fullscreen window and the
+// borders shroud, and it drops back down when the pointer leaves.
+//
+// The resting level used to be -20, below every window. That stopped
+// working on macOS 27.2: with the menu bar set to auto-hide, MenuBarAgent
+// keeps an invisible window at .statusBar (25) over the whole menu-bar
+// strip while the menu bar is hidden. It takes every click there (and
+// answers by sliding the native menu bar in), so a bar below it drew fine
+// but never saw a click. Measured: a probe window at -20 in the strip got
+// no click, the same probe at 26 got it. So the bar rests one level above
+// the strip. Fullscreen still hides it — updateBarVisibility orders it
+// out — and the outer.top gap keeps tiled windows off it; only a floating
+// window dragged into the strip now goes under it instead of over.
+let barRestLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+// Resting above the strip also puts the bar above the native menu bar
+// (.mainMenu, 24), which would leave app menus unreachable by mouse. So
+// when the pointer asks for the native menu bar at the top edge, the bar
+// on that display yields to its old spot below everything and comes back
+// up once the native menu bar has slid away again. Covering the strip does
+// not stop the reveal itself — that follows the pointer, measured.
+let barYieldLevel = NSWindow.Level(rawValue: -20)
 // Revealed, the bar has to clear omacosy-borders' fullscreen shroud, which
 // sits at .screenSaver (1000) and blacks out the camera strip so that
 // aerospace-fullscreen reads as true fullscreen on a notched display.
@@ -3189,14 +3196,68 @@ let barBaseLevel = NSWindow.Level(rawValue: -20)
 let barRevealLevel = NSWindow.Level(rawValue: 1002)
 let revealEdge: CGFloat = 2 // how close to the top edge counts as asking
 var revealed = false
+var yieldedDisplay: CGDirectDisplayID? // the display whose bar sits under the native menu bar
+var yieldTimer: Timer?
+
+func applyBarLevels() {
+    for surface in surfaces {
+        surface.window.level = revealed ? barRevealLevel
+            : screenID(surface.screen) == yieldedDisplay ? barYieldLevel : barRestLevel
+    }
+}
 
 func setRevealed(_ show: Bool) {
     guard show != revealed else { return }
     revealed = show
-    for surface in surfaces {
-        surface.window.level = show ? barRevealLevel : barBaseLevel
-    }
+    applyBarLevels()
     updateBarVisibility()
+}
+
+// Is the Window Server's own menu bar on this display slid in (or sliding)?
+// Hidden, its strip sits entirely above the display's top edge.
+func nativeMenuBarShown(on screen: NSScreen) -> Bool {
+    let primaryH = NSScreen.screens.first?.frame.height ?? 0
+    let topY = primaryH - screen.frame.maxY // the display's top edge, CG space
+    let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+    guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+        as? [[String: Any]] else { return false }
+    return list.contains { w in
+        guard (w[kCGWindowLayer as String] as? Int) == menuLevel,
+              (w[kCGWindowOwnerName as String] as? String) == "Window Server",
+              let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = b["X"], let y = b["Y"], let height = b["Height"]
+        else { return false }
+        return abs(x - screen.frame.minX) < 2 && y + height > topY + 2
+    }
+}
+
+func yieldToNativeMenuBar(on screen: NSScreen) {
+    let id = screenID(screen)
+    guard yieldedDisplay != id else { return }
+    yieldedDisplay = id
+    applyBarLevels()
+    // Polled rather than tied to pointer moves: the native menu bar stays
+    // out while one of its menus is open, wherever the pointer goes, and
+    // slides away on its own schedule after the pointer leaves.
+    yieldTimer?.invalidate()
+    yieldTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+        guard let screen = NSScreen.screens.first(where: { screenID($0) == yieldedDisplay }) else {
+            endYield(); return
+        }
+        let p = NSEvent.mouseLocation
+        let atEdge = screen.frame.insetBy(dx: 0, dy: -2).contains(p) && screen.frame.maxY - p.y <= revealEdge
+        // still asking, or the native menu bar is still out: keep yielding
+        if atEdge || nativeMenuBarShown(on: screen) { return }
+        endYield()
+    }
+}
+
+func endYield() {
+    yieldTimer?.invalidate()
+    yieldTimer = nil
+    guard yieldedDisplay != nil else { return }
+    yieldedDisplay = nil
+    applyBarLevels()
 }
 
 // Called on every pointer move, so it stays a coordinate comparison and
@@ -3210,12 +3271,14 @@ func pointerAtScreenTop() {
     else { return }
     let fromTop = screen.frame.maxY - p.y
     if fromTop <= revealEdge {
-        // Climb only when fullscreen actually hides the bar. Otherwise stay
-        // at the -20 resting level so the auto-hidden native menu bar can
-        // slide in ABOVE the bar and stay clickable — app menus are
-        // unreachable by mouse without this.
+        // Climb only when fullscreen actually hides the bar. Otherwise drop
+        // below everything so the auto-hidden native menu bar can slide in
+        // ABOVE the bar and stay clickable — app menus are unreachable by
+        // mouse without this.
         if fullscreenDisplays().contains(screenID(screen)) {
             setRevealed(true)
+        } else {
+            yieldToNativeMenuBar(on: screen)
         }
     } else if revealed, openPopup == nil,
               fromTop > (surfaces.first(where: { screenID($0.screen) == screenID(screen) })?.barHeight

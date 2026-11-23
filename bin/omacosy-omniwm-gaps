@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# omacosy-omniwm-gaps — give every display its own top gap in OmniWM.
+#
+# The bar is sized by each display's OWN menu-bar strip (a notched
+# built-in's is taller than any external's), so the window gaps have to
+# follow the same per-display answer or they drift apart: one global
+# outer.top sized for one display leaves a band of dead space under
+# every bar shorter than that, and crowds the bar it was sized against
+# when the hardware moves. Measured on a notched Built-in (39pt strip)
+# plus a scaled DELL P2725QE (30pt): a global 42 left the external's
+# windows 12pt below its bar.
+#
+# The gap is asked, not assumed: `omacosy-helper bar-heights` answers
+# "uuid<TAB>strip<TAB>name" for every display up, and each display's
+# top becomes its own strip + margin. No notch-inset subtraction:
+# measured on OmniWM 0.7.6, a resolved outer.top lands windows that far
+# below the DISPLAY top even on the notched built-in (gaps act as
+# max(gap, inset)), so subtracting the inset there would park windows a
+# point UNDER the bar. strip + margin is the one formula that puts
+# every display's windows margin points below its own bar.
+#
+# The values go into settings.toml as [[monitorGapOverrides]] entries
+# keyed by display UUID — the identity OmniWM matches per-monitor
+# settings with first — and [gaps.outer] top, which stays the fallback
+# for any display an override never matches. OmniWM watches the file and
+# live-reloads, so a replug needs no relaunch. Entries are upserted by
+# UUID and an entry's fields other than outerGapTop survive, so a
+# hand-added innerGap on a monitor is not thrown away; entries for
+# displays that are not plugged in now are left exactly as they were,
+# ready for the next replug.
+#
+# Silent by design: it runs from the bar's screen-change handler after
+# every display change, and the install runs it once. No displays, no
+# python3, no settings file, an unparseable file — it leaves everything
+# alone and says nothing on stdout (the install warns once, explicitly).
+set -uo pipefail
+
+H="$HOME/.local/bin/omacosy-helper"
+SETTINGS="$HOME/.config/omniwm/settings.toml"
+MARGIN="${OMACOSY_BAR_MARGIN:-8}"
+
+[ -x "$H" ] || exit 0
+[ -f "$SETTINGS" ] || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+
+ROWS="$("$H" bar-heights 2>/dev/null)" || exit 0
+[ -n "$ROWS" ] || exit 0
+
+# ROWS travels in the environment, not on stdin: python3 reads the
+# script itself from stdin here, so the script and the data cannot
+# share it.
+OMACOSY_GAP_ROWS="$ROWS" python3 - "$SETTINGS" "$MARGIN" <<'PY'
+import os, re, sys, tempfile, tomllib, uuid
+
+path = os.path.realpath(sys.argv[1])
+margin = int(sys.argv[2])
+rows = []
+for line in os.environ.get("OMACOSY_GAP_ROWS", "").splitlines():
+    parts = line.split("\t")
+    if len(parts) == 3 and parts[1].isdigit():
+        rows.append((parts[0], int(parts[1]), parts[2]))  # uuid, strip, name
+if not rows:
+    sys.exit(0)
+
+try:
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+except Exception:
+    # Never rewrite a file we cannot read: OmniWM cold-starts to
+    # defaults over an unparseable settings.toml, and a half-written
+    # edit is how a gap fix becomes a lost config.
+    sys.exit(1)
+
+orig = open(path, encoding="utf-8").read()
+t = orig
+
+# [gaps.outer] top — the fallback for any display no override matches —
+# becomes the MAIN display's value (bar-heights prints screens in
+# arrangement order; the first is the main one).
+main_top = rows[0][1] + margin
+def outer_top(text, value):
+    m = re.search(r"(\[gaps\.outer\]\n(?:(?!\[)[^\n]*\n)*?top = )[0-9.]+", text)
+    if not m:
+        return text, False
+    return text[:m.start()] + m.group(1) + f"{float(value)}" + text[m.end():], True
+t, changed_top = outer_top(t, main_top)
+
+# [[monitorGapOverrides]] — one entry per connected display, upserted by
+# UUID. Entries carry a deterministic id (the same UUID OmniWM would
+# store for this display's gap settings), derived once so repeated runs
+# rewrite nothing.
+GAP_NS = uuid.uuid5(uuid.NAMESPACE_URL, "omacosy://monitor-gap-override")
+existing = [e for e in data.get("monitorGapOverrides", []) if isinstance(e, dict)]
+by_uuid = {e.get("monitorDisplayUUID"): i for i, e in enumerate(existing)
+           if e.get("monitorDisplayUUID")}
+for disp_uuid, strip, name in rows:
+    top = strip + margin
+    if disp_uuid in by_uuid:
+        existing[by_uuid[disp_uuid]]["outerGapTop"] = float(top)
+    else:
+        existing.append({
+            "id": str(uuid.uuid5(GAP_NS, disp_uuid)),
+            "monitorDisplayUUID": disp_uuid,
+            "monitorName": name,
+            "outerGapTop": float(top),
+        })
+
+# Serialize just this array — the file's canonical shape is OmniWM's own
+# (sorted keys, one table per entry); only the fields belong to us.
+def render(entry):
+    lines = ["[[monitorGapOverrides]]"]
+    for k in sorted(entry):
+        v = entry[k]
+        if isinstance(v, str):
+            lines.append(f'{k} = "{v}"')
+        elif isinstance(v, bool):
+            lines.append(f"{k} = {'true' if v else 'false'}")
+        elif isinstance(v, float):
+            lines.append(f"{k} = {v}")
+        elif isinstance(v, int):
+            lines.append(f"{k} = {float(v)}")
+    return "\n".join(lines) + "\n"
+
+block = "".join(render(e) + "\n" for e in existing)
+
+# Drop any previous form of the array (the empty inline OmniWM writes,
+# and every [[monitorGapOverrides]] table region, line by line: a table
+# runs to the next header), then append ours. TOML does not care where
+# an array of tables sits; OmniWM re-sorts the whole file at its next
+# own save.
+t = re.sub(r"^monitorGapOverrides = \[\]\n", "", t, count=1, flags=re.M)
+kept, dropping = [], False
+for line in t.split("\n"):
+    if line.strip() == "[[monitorGapOverrides]]":
+        dropping = True
+        continue
+    if dropping:
+        if line.startswith("["):
+            dropping = False
+        else:
+            continue
+    kept.append(line)
+t = "\n".join(kept).rstrip("\n") + "\n\n" + block
+
+if t == orig:
+    sys.exit(0)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write(t)
+os.replace(tmp, path)
+for disp_uuid, strip, name in rows:
+    print(f"{name}: top {strip + margin} (strip {strip} + margin {margin})")
+PY

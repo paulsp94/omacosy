@@ -664,6 +664,8 @@ cp "$REPO_DIR/config/borders.conf" "$HOME/.config/omacosy/borders.conf"
 printf 'TERMINAL="%s"\nBROWSER="%s"\nEMAIL="%s"\nMUSIC="%s"\nMESSENGER="%s"\n' \
   "$TERMINAL" "$BROWSER" "$EMAIL" "$MUSIC" "$MESSENGER" > "$HOME/.config/omacosy/apps.conf"
 
+# a fresh account has no LaunchAgents folder until something creates it
+mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -18,9 +18,105 @@ set -uo pipefail
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 A="$(command -v aerospace || echo /opt/homebrew/bin/aerospace)"
+BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 STATE_DIR="$HOME/.local/state/omacosy"
 SNAP="$STATE_DIR/wm-switch-snapshot"
+LAUNCHER_CONF="$HOME/.config/omacosy/apps.conf"
+APPS_DIR="${OMACOSY_APPLICATIONS_DIR:-/Applications}"
 mkdir -p "$STATE_DIR"
+
+# --- the launcher this manager needs ---------------------------------------
+# A switch must not leave Super+Space dead. The rule: keep an explicit
+# choice, install it when it is missing, and under auto install the new
+# manager's default only when no supported launcher is here.
+launcher_choice() {
+  local v=""
+  [ -f "$LAUNCHER_CONF" ] && . "$LAUNCHER_CONF" 2>/dev/null
+  case "${LAUNCHER:-auto}" in
+    auto | raycast | tinycast | alfred | omniwm | none) printf '%s' "${LAUNCHER:-auto}" ;;
+    *) printf 'auto' ;;
+  esac
+}
+
+launcher_installed() {
+  case "$1" in
+    raycast) [ -d "$APPS_DIR/Raycast.app" ] \
+      || mdfind "kMDItemCFBundleIdentifier == 'com.raycast.macos'" 2>/dev/null | grep -q . ;;
+    tinycast) [ -d "$APPS_DIR/Tinycast.app" ] \
+      || mdfind "kMDItemCFBundleIdentifier == 'com.abueammar.tinycast'" 2>/dev/null | grep -q . ;;
+    alfred) [ -d "$APPS_DIR/Alfred 6.app" ] || [ -d "$APPS_DIR/Alfred.app" ] \
+      || mdfind "kMDItemCFBundleIdentifier == 'com.runningwithcrayons.Alfred'" 2>/dev/null | grep -q . ;;
+    *) return 1 ;;
+  esac
+}
+
+launcher_name() {
+  case "$1" in
+    raycast) printf 'Raycast' ;;
+    tinycast) printf 'Tinycast' ;;
+    alfred) printf 'Alfred' ;;
+    omniwm) printf 'OmniWM' ;;
+  esac
+}
+
+install_launcher() {
+  local l=$1
+  log "Installing $(launcher_name "$l")"
+  case "$l" in
+    raycast) "$BREW" install --cask raycast ;;
+    tinycast)
+      "$BREW" trust abue-ammar/tinycast 2>/dev/null || true
+      "$BREW" install --cask abue-ammar/tinycast/tinycast
+      ;;
+    alfred) "$BREW" install --cask alfred ;;
+    *) return 1 ;;
+  esac || { log "Could not install $(launcher_name "$l"); Super+Space will name it on the next press"; return 1; }
+  # Recorded like install.sh's casks, so uninstall.sh removes what the switch added.
+  grep -qxF "brew-cask $l" "$STATE_DIR/manifest" 2>/dev/null \
+    || echo "brew-cask $l" >> "$STATE_DIR/manifest"
+}
+
+ensure_launcher() { # <aerospace|omniwm>
+  local manager=$1 choice have=""
+  choice="$(launcher_choice)"
+  case "$choice" in
+    none)
+      log "Launcher: none, Super+Space stays unbound"
+      ;;
+    auto)
+      if [ "$manager" = omniwm ]; then
+        log "Launcher: auto, Super+Space uses OmniWM's own"
+        return 0
+      fi
+      for l in raycast tinycast alfred; do
+        launcher_installed "$l" && { have=$l; break; }
+      done
+      if [ -n "$have" ]; then
+        log "Launcher: auto, $(launcher_name "$have") is installed"
+      else
+        install_launcher raycast
+      fi
+      ;;
+    omniwm)
+      if [ "$manager" = omniwm ]; then
+        log "Launcher: OmniWM's own"
+      else
+        # OmniWM's palette is IPC; away from OmniWM the value cannot work.
+        log "Launcher: omniwm only works under OmniWM; Super+Space uses Raycast instead"
+        "$HOME/.local/bin/omacosy-launcher-apply" auto >/dev/null 2>&1 \
+          || log "Could not write the launcher fallback; run: omacosy-launcher-apply auto"
+      fi
+      ;;
+    *)
+      if launcher_installed "$choice"; then
+        log "Launcher: $(launcher_name "$choice") is installed"
+      else
+        install_launcher "$choice"
+      fi
+      ;;
+  esac
+  return 0
+}
 
 snapshot() {
   "$A" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}' \
@@ -120,6 +216,7 @@ omniwm)
   done
   [ "$ready" = 1 ] || revert
   trap - INT TERM
+  ensure_launcher omniwm
   # the exec chords (terminal, launcher, theme, lock, ...) lived in
   # aerospace.toml — OmniWM's hotkeys cannot exec, so they move into
   # Karabiner rules for the duration
@@ -169,6 +266,9 @@ aerospace)
   "$HOME/.local/bin/omacosy-karabiner-omniwm" remove 2>/dev/null || true
   osascript -e 'quit app "OmniWM"' 2>/dev/null || true
   pkill -x OmniWM 2>/dev/null || true
+  # Now that OmniWM is gone, an explicit `omniwm` choice can be moved to
+  # auto without the applier injecting the rules we just removed.
+  ensure_launcher aerospace
   start_aerospace_world
   sleep 2
   restore_snapshot

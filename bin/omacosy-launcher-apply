@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# omacosy-launcher-apply [value]: apply a launcher choice to the live system.
+#
+# Internal command, not the documented way to choose: users set LAUNCHER in
+# ~/.config/omacosy/apps.conf or config/apps.local.conf, or run
+# ./install.sh --launcher <value>. install.sh, omacosy-wm-switch and the
+# settings dashboard call this, so all three take the same steps:
+#
+#   - write the choice to the live apps.conf,
+#   - add, move or remove the AeroSpace cmd-ctrl-alt-space chord,
+#   - refresh OmniWM's Karabiner rules when OmniWM is running,
+#   - reload AeroSpace when it is running.
+#
+# Without an argument it applies the value already in the live apps.conf.
+set -u
+
+APPS="$HOME/.config/omacosy/apps.conf"
+AERO="$HOME/.config/aerospace/aerospace.toml"
+OMNI="$HOME/.local/bin/omacosy-omni"
+AEROBIN="$(command -v aerospace 2>/dev/null || echo /opt/homebrew/bin/aerospace)"
+# The repo's copy first: install.sh runs this before the links are refreshed,
+# and an older installed copy would otherwise refresh the rules it knows.
+SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+KARA="$SELF/omacosy-karabiner-omniwm"
+[ -x "$KARA" ] || KARA="$HOME/.local/bin/omacosy-karabiner-omniwm"
+
+valid() {
+  case "$1" in
+    auto | raycast | tinycast | alfred | omniwm | none) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configured() {
+  local v=""
+  [ -f "$APPS" ] && . "$APPS" 2>/dev/null
+  v="${LAUNCHER:-auto}"
+  valid "$v" || v=auto
+  printf '%s' "$v"
+}
+
+omniwm_active() {
+  [ -x "$OMNI" ] && "$OMNI" active >/dev/null 2>&1
+}
+
+write_choice() {
+  local value=$1
+  mkdir -p "$(dirname "$APPS")"
+  if [ -f "$APPS" ] && grep -q '^LAUNCHER=' "$APPS"; then
+    sed -i '' -E "s|^LAUNCHER=.*|LAUNCHER=\"$value\"|" "$APPS"
+  else
+    printf 'LAUNCHER="%s"\n' "$value" >> "$APPS"
+  fi
+}
+
+patch_aerospace() {
+  local value=$1 line anchor
+  [ -f "$AERO" ] || return 0
+  line="cmd-ctrl-alt-space = 'exec-and-forget \$HOME/.local/bin/omacosy-launcher'"
+
+  # A line the user wrote themselves is never rewritten: only omacosy's own
+  # wrapper and the two forms it replaced are ours to touch.
+  ours() {
+    grep -Eq '^cmd-ctrl-alt-space = .*(omacosy-launcher|open -a Raycast|open-command-palette)' "$AERO"
+  }
+
+  if [ "$value" = none ]; then
+    grep -q '^cmd-ctrl-alt-space = ' "$AERO" || return 0
+    if ours; then
+      sed -i '' -E '/^cmd-ctrl-alt-space = .*(omacosy-launcher|open -a Raycast|open-command-palette)/d' "$AERO"
+    else
+      echo "omacosy-launcher-apply: left your own cmd-ctrl-alt-space binding alone" >&2
+    fi
+    return 0
+  fi
+
+  if grep -q '^cmd-ctrl-alt-space = ' "$AERO"; then
+    if ours; then
+      sed -i '' -E "s|^cmd-ctrl-alt-space = .*|$line|" "$AERO"
+    else
+      echo "omacosy-launcher-apply: left your own cmd-ctrl-alt-space binding alone" >&2
+    fi
+    return 0
+  fi
+
+  for anchor in cmd-ctrl-alt-shift-enter cmd-ctrl-alt-enter; do
+    grep -q "^$anchor = " "$AERO" || continue
+    awk -v line="$line" -v pat="^$anchor = " '
+      { print }
+      $0 ~ pat && !done { print line; done = 1 }
+    ' "$AERO" > "$AERO.omacosy.tmp" && mv -f "$AERO.omacosy.tmp" "$AERO"
+    return 0
+  done
+  echo "omacosy-launcher-apply: no anchor in $AERO to insert the launcher chord" >&2
+}
+
+value="${1:-}"
+if [ -z "$value" ]; then
+  value="$(configured)"
+elif ! valid "$value"; then
+  echo "omacosy-launcher-apply: expected auto|raycast|tinycast|alfred|omniwm|none" >&2
+  exit 2
+fi
+
+write_choice "$value"
+patch_aerospace "$value"
+
+if omniwm_active; then
+  [ -x "$KARA" ] && "$KARA" install >/dev/null 2>&1 \
+    || echo "omacosy-launcher-apply: could not refresh the OmniWM Karabiner rules" >&2
+fi
+
+# A live AeroSpace reads the chord only on reload. During install.sh it is
+# not running yet, so this is a no-op there.
+if pgrep -x AeroSpace >/dev/null 2>&1 && [ -x "$AEROBIN" ]; then
+  "$AEROBIN" reload-config >/dev/null 2>&1 || true
+fi
+
+printf 'launcher: %s\n' "$value"

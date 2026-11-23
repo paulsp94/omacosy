@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# omacosy-launcher: Super+Space opens or closes the chosen launcher.
+#
+#   omacosy-launcher          open the chosen launcher, or close it
+#   omacosy-launcher status   show the setting and what it resolves to
+#
+# The value lives in ~/.config/omacosy/apps.conf as LAUNCHER. "auto" follows
+# the window manager: Raycast under AeroSpace, OmniWM's launcher under OmniWM.
+# "none" leaves the chord unbound; there is no binding to call this script in
+# that state. It is for an unsupported launcher (LaunchBar, Quicksilver,
+# Spotlight, a custom script), a launcher's own hotkey, or no launcher at all.
+#
+# A close is the launcher's own toggle where it has one (OmniWM's CLI) and
+# Escape posted to the launcher's process for Raycast, Alfred and Tinycast.
+# No key goes to the frontmost app, so a rebound hotkey cannot type into it.
+#
+# A press that cannot open the chosen app falls back to this manager's
+# default, then to nothing. Every fallback names the app it skipped and what
+# it opened instead, through a banner the bar posts.
+set -u
+
+APPS="$HOME/.config/omacosy/apps.conf"
+# OMACOSY_HELPER lets a checkout's build be tested before it is installed.
+HELPER="${OMACOSY_HELPER:-$HOME/.local/bin/omacosy-helper}"
+# The bar watches this file and posts the two lines as a banner. Overridable
+# so the selftest never writes to the running bar's file.
+NOTICE="${OMACOSY_NOTICE_FILE:-/tmp/omacosy-bar-notice}"
+OMNI="${OMACOSY_OMNI:-$HOME/.local/bin/omacosy-omni}"
+OMNIWMCTL="$(command -v omniwmctl 2>/dev/null || echo /opt/homebrew/bin/omniwmctl)"
+# Key repeat and a fast double tap must produce one action, not two. The
+# selftest pins the window so the check does not depend on machine speed.
+DEBOUNCE_MS="${OMACOSY_LAUNCHER_DEBOUNCE_MS:-250}"
+# OMACOSY_APPLICATIONS_DIR lets the selftest hide the real apps.
+APPS_DIR="${OMACOSY_APPLICATIONS_DIR:-/Applications}"
+# Tinycast 0.12.15 (2026-11-14) renamed its bundle identifier from
+# com.tinycast.app to com.abueammar.tinycast. The id is read from the
+# installed app, so a rename cannot leave Super+Space opening another
+# launcher; this constant is only the fallback for a copy that cannot be read.
+TINYCAST_APP="$APPS_DIR/Tinycast.app"
+TINYCAST_ID="com.abueammar.tinycast"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: omacosy-launcher            open or close the chosen launcher
+       omacosy-launcher status     show the setting and what it resolves to
+EOF
+  exit 2
+}
+
+valid() {
+  case "$1" in
+    auto | raycast | tinycast | alfred | omniwm | none) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configured() {
+  local v=""
+  [ -f "$APPS" ] && . "$APPS" 2>/dev/null
+  v="${LAUNCHER:-auto}"
+  valid "$v" || v=auto
+  printf '%s' "$v"
+}
+
+omniwm_active() {
+  [ -x "$OMNI" ] && "$OMNI" active >/dev/null 2>&1
+}
+
+tinycast_id() {
+  local id=""
+  # plutil, not PlistBuddy: PlistBuddy prints "File Doesn't Exist, Will
+  # Create" on stdout for a missing path, which would become the bundle id.
+  id="$(plutil -extract CFBundleIdentifier raw -o - \
+    "$TINYCAST_APP/Contents/Info.plist" 2>/dev/null)" || id=""
+  printf '%s' "${id:-$TINYCAST_ID}"
+}
+
+installed() {
+  case "$1" in
+    raycast)
+      [ -d "$APPS_DIR/Raycast.app" ] && return 0
+      mdfind "kMDItemCFBundleIdentifier == 'com.raycast.macos'" 2>/dev/null | grep -q .
+      ;;
+    tinycast)
+      [ -d "$TINYCAST_APP" ] && return 0
+      mdfind "kMDItemCFBundleIdentifier == '$(tinycast_id)'" 2>/dev/null | grep -q .
+      ;;
+    alfred)
+      { [ -d "$APPS_DIR/Alfred 6.app" ] || [ -d "$APPS_DIR/Alfred.app" ]; } && return 0
+      mdfind "kMDItemCFBundleIdentifier == 'com.runningwithcrayons.Alfred'" 2>/dev/null | grep -q .
+      ;;
+    omniwm) [ -d "$APPS_DIR/OmniWM.app" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+resolved() {
+  case "$1" in
+    auto)
+      if omniwm_active; then printf 'omniwm'; else printf 'raycast'; fi
+      ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# The launcher this manager expects when the choice is auto or has to fall
+# back: Raycast under AeroSpace, OmniWM's own palette under OmniWM.
+manager_default() {
+  if omniwm_active; then printf 'omniwm'; else printf 'raycast'; fi
+}
+
+label() {
+  case "$1" in
+    raycast) printf 'Raycast' ;;
+    tinycast) printf 'Tinycast' ;;
+    alfred) printf 'Alfred' ;;
+    omniwm) printf 'OmniWM' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Can this launcher act right now? OmniWM's palette is IPC, so the app has
+# to be running as well as installed.
+available() {
+  case "$1" in
+    omniwm) installed omniwm && omniwm_active ;;
+    *) installed "$1" ;;
+  esac
+}
+
+# Why it cannot act, in the words the banner uses.
+reason() {
+  case "$1" in
+    omniwm)
+      if installed omniwm; then
+        printf 'OmniWM is not running'
+      else
+        printf 'OmniWM is not installed'
+      fi
+      ;;
+    *) printf '%s is not installed' "$(label "$1")" ;;
+  esac
+}
+
+# A banner goes through the bar: it owns the bundle, so macOS attributes the
+# notice to Omacosy instead of Script Editor. Without the bar there is no
+# banner, so the same line goes to the bar's log.
+notice() {
+  local title=$1 body=$2
+  if pgrep -x omacosy-bar >/dev/null 2>&1; then
+    printf '%s\n%s\n' "$title" "$body" > "$NOTICE" 2>/dev/null || true
+  else
+    printf '%s: %s\n' "$title" "$body" \
+      >> "${OMACOSY_NOTICE_LOG:-/tmp/omacosy-bar.log}" 2>/dev/null || true
+  fi
+}
+
+window_open() {
+  [ -x "$HELPER" ] && "$HELPER" window-exists "$1" >/dev/null 2>&1
+}
+
+dismiss() {
+  [ -x "$HELPER" ] || return 1
+  "$HELPER" window-dismiss "$1" >/dev/null 2>&1
+}
+
+now_ms() {
+  perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000' 2>/dev/null \
+    || printf '%s000\n' "$(date +%s)"
+}
+
+# Succeed (and swallow the press) when this launcher acted less than
+# DEBOUNCE_MS ago. One stamp per launcher, under the user's temp dir.
+too_soon() {
+  local target=$1 dir stamp now last
+  dir="${TMPDIR:-/tmp}/omacosy-launcher-$(id -u)"
+  mkdir -p "$dir" 2>/dev/null || return 1
+  stamp="$dir/$target.stamp"
+  now="$(now_ms)"
+  last="$(cat "$stamp" 2>/dev/null || true)"
+  case "$last" in '' | *[!0-9]*) last=0 ;; esac
+  if [ "$last" -gt 0 ] && [ $((now - last)) -lt "$DEBOUNCE_MS" ]; then
+    return 0
+  fi
+  printf '%s\n' "$now" > "$stamp" 2>/dev/null || true
+  return 1
+}
+
+# One action for one press: close the panel if it is up, open it if not.
+act() {
+  case "$1" in
+    raycast)
+      if window_open Raycast; then
+        dismiss Raycast
+      else
+        # -g lets the non-activating panel appear without taking focus.
+        open -g -b com.raycast.macos "raycast://" >/dev/null 2>&1
+      fi
+      ;;
+    tinycast)
+      if window_open Tinycast; then
+        dismiss Tinycast
+      else
+        # -g is the difference from the URL's activate path: the app behind
+        # keeps focus, exactly like Tinycast's own Option+Space shortcut.
+        open -g -b "$(tinycast_id)" "tinycast://" >/dev/null 2>&1
+      fi
+      ;;
+    alfred)
+      installed alfred || return 1
+      if window_open Alfred; then
+        dismiss Alfred
+      else
+        osascript -e 'tell application id "com.runningwithcrayons.Alfred" to search ""' >/dev/null 2>&1
+      fi
+      ;;
+    omniwm)
+      omniwm_active || return 1
+      [ -x "$OMNIWMCTL" ] || return 1
+      # The same command opens and closes the palette.
+      "$OMNIWMCTL" command open-command-palette applications >/dev/null 2>&1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+launch() {
+  local value target fallback why
+  value="$(configured)"
+  [ "$value" = none ] && exit 0
+  if [ "$value" = auto ]; then
+    # auto follows the manager. It is not an explicit app, so a missing
+    # default is a quiet miss: install.sh and wm-switch are where it is
+    # installed or named.
+    target="$(manager_default)"
+    available "$target" || exit 1
+  else
+    target="$value"
+    if ! available "$target"; then
+      why="$(reason "$target")"
+      fallback="$(manager_default)"
+      if [ "$fallback" != "$target" ] && available "$fallback"; then
+        notice "Super+Space" "$why. Opened $(label "$fallback") instead."
+        target="$fallback"
+      else
+        notice "Super+Space" "$why. Nothing opened."
+        exit 1
+      fi
+    fi
+  fi
+  too_soon "$target" && exit 0
+  act "$target"
+  exit $?
+}
+
+status() {
+  local value target r t a o active available_now would
+  value="$(configured)"
+  target="$(resolved "$value")"
+  installed raycast && r=true || r=false
+  installed tinycast && t=true || t=false
+  installed alfred && a=true || a=false
+  installed omniwm && o=true || o=false
+  omniwm_active && active=true || active=false
+  case "$target" in
+    omniwm) [ "$active" = true ] && available_now=true || available_now=false ;;
+    raycast) available_now=$r ;;
+    tinycast) available_now=$t ;;
+    alfred) available_now=$a ;;
+    none) available_now=true ;;
+    *) available_now=false ;;
+  esac
+  # What a press would do, including the fallback a missing app triggers.
+  would=$target
+  if [ "$available_now" = false ]; then
+    if [ "$value" = auto ]; then
+      would=none
+    elif [ "$value" != none ]; then
+      would="$(manager_default)"
+      [ "$would" = "$target" ] && would=none
+    fi
+  fi
+
+  printf 'launcher:    %s\n' "$value"
+  printf 'resolves to: %s\n' "$target"
+  printf 'available:   %s\n' "$([ "$available_now" = true ] && echo yes || echo no)"
+  printf 'would open:  %s\n' "$would"
+  printf 'installed:   raycast=%s tinycast=%s alfred=%s omniwm=%s\n' \
+    "$([ "$r" = true ] && echo yes || echo no)" \
+    "$([ "$t" = true ] && echo yes || echo no)" \
+    "$([ "$a" = true ] && echo yes || echo no)" \
+    "$([ "$o" = true ] && echo yes || echo no)"
+  printf 'omniwm:      %s\n' "$([ "$active" = true ] && echo running || echo stopped)"
+}
+
+case "${1:-}" in
+  '') launch ;;
+  status) [ "$#" -eq 1 ] || usage; status ;;
+  -h | --help | help) sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
+  *) usage ;;
+esac

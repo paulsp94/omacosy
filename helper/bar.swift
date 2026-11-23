@@ -34,6 +34,7 @@ import IOBluetooth
 import IOKit.ps
 import SystemConfiguration
 import UniformTypeIdentifiers
+import UserNotifications
 
 // DisplayServices (private) — the same calls Control Center makes, and
 // the same ones helper/main.swift uses for `omacosy-helper brightness`.
@@ -3271,6 +3272,70 @@ func watch(_ path: String, create: Bool, handler: @escaping () -> Void) {
     }
     src.resume()
 }
+
+// --- notices --------------------------------------------------------------
+// The launcher's fallback banner. bin/omacosy-launcher writes two lines to
+// a file; the bar owns the bundle, so macOS names Omacosy as the sender
+// instead of Script Editor. First use asks for notification permission.
+// A refusal is not an error: the same line goes to the log.
+let noticePath = ProcessInfo.processInfo.environment["OMACOSY_NOTICE_FILE"]
+    ?? "/tmp/omacosy-bar-notice"
+
+final class NoticePresenter: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler:
+                                @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner])
+    }
+}
+let noticePresenter = NoticePresenter()
+
+func postNotice(title: String, body: String) {
+    let center = UNUserNotificationCenter.current()
+    center.delegate = noticePresenter
+    let deliver = {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        center.add(UNNotificationRequest(identifier: UUID().uuidString,
+                                         content: content, trigger: nil)) { error in
+            if let error = error {
+                tlog("notice not shown: \(error.localizedDescription)")
+            }
+        }
+    }
+    center.getNotificationSettings { settings in
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            deliver()
+        case .notDetermined:
+            center.requestAuthorization(options: [.alert]) { granted, _ in
+                if granted {
+                    deliver()
+                } else {
+                    tlog("notice skipped (notifications denied): \(title) - \(body)")
+                }
+            }
+        default:
+            tlog("notice skipped (notifications not allowed): \(title) - \(body)")
+        }
+    }
+}
+
+func drainNotice() {
+    guard let text = try? String(contentsOfFile: noticePath, encoding: .utf8) else { return }
+    let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+    let title = lines.first.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let body = lines.count > 1 ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    guard !body.isEmpty else { return }
+    // Truncate instead of deleting: a delete cancels the watch source and
+    // forces a re-arm for no reason.
+    try? "".write(toFile: noticePath, atomically: false, encoding: .utf8)
+    postNotice(title: title.isEmpty ? "Omacosy" : title, body: body)
+}
+
+watch(noticePath, create: true) { drainNotice() }
 
 // A window sent from one HIDDEN workspace to another moves nothing on
 // screen, so SkyLight reports nothing at all — measured with a probe:

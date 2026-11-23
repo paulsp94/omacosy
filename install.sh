@@ -9,11 +9,16 @@ log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 usage() {
   cat <<'EOF'
-usage: ./install.sh [--aerospace | --omniwm] [--yazi | --yazi-full]
+usage: ./install.sh [--aerospace | --omniwm] [--launcher <value>] [--yazi | --yazi-full]
 
   (no option)   keep the window manager this Mac runs; AeroSpace on a new Mac
   --aerospace   install and run AeroSpace
   --omniwm      install and run OmniWM; AeroSpace is not installed
+  --launcher    auto, raycast, tinycast, alfred, omniwm or none
+                auto (the default) = Raycast on AeroSpace, OmniWM on OmniWM
+                none = install no third-party launcher and leave Super+Space
+                       unbound; use it for an unsupported launcher, a
+                       launcher's own hotkey, or no launcher at all
   --yazi        also install yazi, a file manager on Super+Shift+Y, with the
                 helpers it previews and searches with (fd, poppler, resvg,
                 sevenzip)
@@ -28,18 +33,30 @@ EOF
 }
 
 WM_FLAG=
+LAUNCHER_FLAG=
 WITH_YAZI=0
 YAZI_FULL=0
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --aerospace) WM_FLAG=aerospace ;;
     --omniwm) WM_FLAG=omniwm ;;
+    --launcher)
+      [ $# -ge 2 ] || { printf 'install.sh: --launcher needs a value\n\n' >&2; usage >&2; exit 2; }
+      LAUNCHER_FLAG=$2
+      shift
+      ;;
+    --launcher=*) LAUNCHER_FLAG=${1#*=} ;;
     --yazi) WITH_YAZI=1 ;;
     --yazi-full) WITH_YAZI=1; YAZI_FULL=1 ;;
     -h | --help) usage; exit 0 ;;
-    *) printf 'install.sh: unknown option: %s\n\n' "$arg" >&2; usage >&2; exit 2 ;;
+    *) printf 'install.sh: unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
+  shift
 done
+case "$LAUNCHER_FLAG" in
+  '' | auto | raycast | tinycast | alfred | omniwm | none) ;;
+  *) printf 'install.sh: --launcher must be auto, raycast, tinycast, alfred, omniwm or none\n\n' >&2; usage >&2; exit 2 ;;
+esac
 
 # --- 0. Manifest: record what THIS machine gains ----------------------------
 # uninstall.sh removes only what is recorded here, so tools and settings
@@ -47,6 +64,9 @@ done
 # recorded prior values; re-runs never duplicate entries.
 STATE_DIR="$HOME/.local/state/omacosy"
 MANIFEST="$STATE_DIR/manifest"
+# OMACOSY_APPLICATIONS_DIR is a test hook: the launcher checks default to
+# the real /Applications.
+APPS_DIR="${OMACOSY_APPLICATIONS_DIR:-/Applications}"
 mkdir -p "$STATE_DIR"
 touch "$MANIFEST"
 mark() { grep -qxF "$1" "$MANIFEST" || printf '%s\n' "$1" >> "$MANIFEST"; }
@@ -89,6 +109,153 @@ elif [ -d /Applications/OmniWM.app ]; then
   fi
 fi
 
+# generate aerospace.toml from the template + app choices
+#
+# These are READ, not sourced. apps.local.conf is a file the README
+# invites you to paste values into, and `source` would execute whatever
+# is in it. The values then go through sed into single-quoted TOML
+# strings, so a name carrying a quote or a newline could close the
+# string and add its own aerospace command: anything outside a plain app
+# name is refused rather than substituted.
+read_apps() {
+  local f="$1" line k v
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    k="${line%%=*}"; v="${line#*=}"
+    [ "$k" = "$line" ] && continue          # no '=' on the line
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    if [ "$k" = LAUNCHER ]; then
+      case "$v" in
+        auto | raycast | tinycast | alfred | omniwm | none)
+          LAUNCHER="$v"
+          # Only apps.local.conf counts as a saved choice: apps.conf ships
+          # LAUNCHER=auto, and install-time detection must not treat that
+          # default as something the user picked.
+          [ "${2:-}" = saved ] && LAUNCHER_SAVED=1
+          ;;
+        *) log "ignoring LAUNCHER in $(basename "$f"): expected auto, raycast, tinycast, alfred, omniwm or none" ;;
+      esac
+      continue
+    fi
+    case "$v" in
+      ''|*[!A-Za-z0-9\ ._-]*)
+        log "ignoring $k in $(basename "$f"): an app name cannot contain '$v'"
+        continue ;;
+    esac
+    case "$k" in
+      TERMINAL) TERMINAL="$v" ;;
+      BROWSER) BROWSER="$v" ;;
+      EMAIL) EMAIL="$v" ;;
+      MUSIC) MUSIC="$v" ;;
+      MESSENGER) MESSENGER="$v" ;;
+    esac
+  done < "$f"
+}
+# The apps the launch chords open. config/apps.conf holds the shipped
+# defaults and apps.local.conf overrides them; BROWSER and EMAIL are
+# deliberately left unset there, so those chords follow the macOS default
+# web browser and mail app (see bin/omacosy-browser, bin/omacosy-open)
+# until you name one.
+TERMINAL= BROWSER= EMAIL= MUSIC= MESSENGER= LAUNCHER=auto
+LAUNCHER_SAVED=
+read_apps "$REPO_DIR/config/apps.conf"
+read_apps "$REPO_DIR/config/apps.local.conf" saved
+# An explicit flag wins. Otherwise a re-run keeps apps.local.conf's value,
+# and a fresh install keeps the shipped `auto`.
+if [ -n "$LAUNCHER_FLAG" ]; then LAUNCHER=$LAUNCHER_FLAG; fi
+case "$LAUNCHER" in
+  auto | raycast | tinycast | alfred | omniwm | none) ;;
+  *) log "ignoring LAUNCHER=$LAUNCHER: expected auto, raycast, tinycast, alfred, omniwm or none"
+     LAUNCHER=auto ;;
+esac
+# OmniWM's launcher talks to OmniWM over IPC, so it is the one value that
+# only works under OmniWM. An explicit contradictory flag is an error; a
+# stale saved value is ignored for this install and falls back to auto.
+if [ "$LAUNCHER" = omniwm ] && [ "$WM" != omniwm ]; then
+  if [ "$LAUNCHER_FLAG" = omniwm ]; then
+    printf 'install.sh: --launcher omniwm needs --omniwm (or OmniWM running)\n\n' >&2
+    usage >&2
+    exit 2
+  fi
+  log "LAUNCHER=omniwm only applies under OmniWM; using auto for this $WM install."
+  LAUNCHER=auto
+fi
+
+# The launchers omacosy supports besides OmniWM's own. Detection asks the
+# same question the opener does, so the two cannot disagree.
+launcher_installed() {
+  case "$1" in
+    raycast) [ -d "$APPS_DIR/Raycast.app" ] \
+      || mdfind "kMDItemCFBundleIdentifier == 'com.raycast.macos'" 2>/dev/null | grep -q . ;;
+    tinycast) [ -d "$APPS_DIR/Tinycast.app" ] \
+      || mdfind "kMDItemCFBundleIdentifier == 'com.abueammar.tinycast'" 2>/dev/null | grep -q . ;;
+    alfred) [ -d "$APPS_DIR/Alfred 6.app" ] || [ -d "$APPS_DIR/Alfred.app" ] \
+      || mdfind "kMDItemCFBundleIdentifier == 'com.runningwithcrayons.Alfred'" 2>/dev/null | grep -q . ;;
+    *) return 1 ;;
+  esac
+}
+
+launcher_name() {
+  case "$1" in
+    raycast) printf 'Raycast' ;;
+    tinycast) printf 'Tinycast' ;;
+    alfred) printf 'Alfred' ;;
+    omniwm) printf 'OmniWM' ;;
+  esac
+}
+
+# No flag and no saved choice: use the only third-party launcher that is
+# already here, keep auto when there are several, and name the manager's
+# default when there is none. A guess is only safe when there is one answer.
+if [ -z "$LAUNCHER_FLAG" ] && [ -z "$LAUNCHER_SAVED" ]; then
+  found= count=0
+  for candidate in raycast tinycast alfred; do
+    if launcher_installed "$candidate"; then
+      found=$candidate
+      count=$((count + 1))
+    fi
+  done
+  if [ "$count" -eq 1 ]; then
+    LAUNCHER=$found
+    log "found $(launcher_name "$found"), Super+Space uses it"
+  elif [ "$count" -gt 1 ]; then
+    log "found $count launchers, Super+Space follows the window manager (auto)"
+  elif [ "$WM" = omniwm ]; then
+    log "no third-party launcher found, Super+Space uses OmniWM's own"
+  else
+    log "no third-party launcher found, Super+Space uses Raycast (auto)"
+  fi
+fi
+
+# --launcher is saved where install.sh already reads choices, so a re-run or
+# omacosy-update keeps it instead of returning to auto. Other keys in the
+# file are left alone.
+save_launcher_choice() {
+  local f="$REPO_DIR/config/apps.local.conf"
+  if [ -f "$f" ] && grep -q '^LAUNCHER=' "$f"; then
+    sed -i '' -E "s|^LAUNCHER=.*|LAUNCHER=$1|" "$f"
+  else
+    printf 'LAUNCHER=%s\n' "$1" >> "$f"
+  fi
+}
+if [ -n "$LAUNCHER_FLAG" ]; then save_launcher_choice "$LAUNCHER"; fi
+
+# What the Brewfile installs. auto keeps today's behaviour: Raycast on
+# AeroSpace, OmniWM's own launcher on OmniWM (so no third-party cask).
+if [ "$LAUNCHER" = auto ]; then
+  if [ "$WM" = omniwm ]; then BREW_LAUNCHER=none; else BREW_LAUNCHER=raycast; fi
+else
+  BREW_LAUNCHER=$LAUNCHER
+fi
+# App choices, RESOLVED (apps.local.conf already applied). Written before
+# the Karabiner rules so a first OmniWM install already knows LAUNCHER=none;
+# the bar's activity pill reads this file too and cannot read the repo from
+# a launchd agent when the clone is TCC-protected.
+mkdir -p "$HOME/.config/omacosy"
+printf 'TERMINAL="%s"\nBROWSER="%s"\nEMAIL="%s"\nMUSIC="%s"\nMESSENGER="%s"\nLAUNCHER="%s"\n' \
+  "$TERMINAL" "$BROWSER" "$EMAIL" "$MUSIC" "$MESSENGER" "$LAUNCHER" > "$HOME/.config/omacosy/apps.conf"
+
 # --- 1. Homebrew ------------------------------------------------------------
 if ! command -v brew >/dev/null 2>&1; then
   log "Installing Homebrew"
@@ -103,13 +270,15 @@ fi
 # Homebrew >=6 refuses third-party taps until explicitly trusted
 brew trust nikitabobko/tap 2>/dev/null || true
 brew trust felixkratz/formulae 2>/dev/null || true
+[ "$BREW_LAUNCHER" = tinycast ] && brew trust abue-ammar/tinycast 2>/dev/null || true
 
 log "Installing packages (brew bundle)"
 PRE_FORMULAE="$(brew list --formula 2>/dev/null | sort)"
 PRE_CASKS="$(brew list --cask 2>/dev/null | sort)"
-# the Brewfile installs only this window manager. Homebrew drops every
-# variable without the HOMEBREW_ prefix before it reads the Brewfile.
+# the Brewfile installs only this window manager and launcher. Homebrew
+# drops every variable without the HOMEBREW_ prefix before it reads it.
 export HOMEBREW_OMACOSY_WM=$WM
+export HOMEBREW_OMACOSY_LAUNCHER=$BREW_LAUNCHER
 # One package failing must not abort the install: the rest of the desktop
 # does not depend on it, and `set -e` would otherwise take a cask that
 # merely needs sudo to adopt an existing app and turn it into a dead stop.
@@ -264,44 +433,6 @@ zshrc_setup() {
   log "Wrote the ~/.zshrc stub. Your config belongs in ~/.zshrc.local."
 }
 
-# generate aerospace.toml from the template + app choices
-#
-# These are READ, not sourced. apps.local.conf is a file the README
-# invites you to paste values into, and `source` would execute whatever
-# is in it. The values then go through sed into single-quoted TOML
-# strings, so a name carrying a quote or a newline could close the
-# string and add its own aerospace command: anything outside a plain app
-# name is refused rather than substituted.
-read_apps() {
-  local f="$1" line k v
-  [ -f "$f" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*) continue ;; esac
-    k="${line%%=*}"; v="${line#*=}"
-    [ "$k" = "$line" ] && continue          # no '=' on the line
-    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
-    case "$v" in
-      ''|*[!A-Za-z0-9\ ._-]*)
-        log "ignoring $k in $(basename "$f"): an app name cannot contain '$v'"
-        continue ;;
-    esac
-    case "$k" in
-      TERMINAL) TERMINAL="$v" ;;
-      BROWSER) BROWSER="$v" ;;
-      EMAIL) EMAIL="$v" ;;
-      MUSIC) MUSIC="$v" ;;
-      MESSENGER) MESSENGER="$v" ;;
-    esac
-  done < "$f"
-}
-# The apps the launch chords open. config/apps.conf holds the shipped
-# defaults and apps.local.conf overrides them; BROWSER and EMAIL are
-# deliberately left unset there, so those chords follow the macOS default
-# web browser and mail app (see bin/omacosy-browser, bin/omacosy-open)
-# until you name one.
-TERMINAL= BROWSER= EMAIL= MUSIC= MESSENGER=
-read_apps "$REPO_DIR/config/apps.conf"
-read_apps "$REPO_DIR/config/apps.local.conf"
 # Super+Shift+Y is bound only where yazi is installed: an optional tool gets
 # no chord that can only fail. Installing it later takes a re-run.
 if command -v yazi >/dev/null 2>&1 || [ -x /opt/homebrew/bin/yazi ]; then YAZI_LINE='s|^#yazi# ||'; else YAZI_LINE='/^#yazi# /d'; fi
@@ -347,6 +478,9 @@ case "$BAR_HEIGHT" in
     ;;
 esac
 
+# The launcher chord is applied by omacosy-launcher-apply below, once the
+# live config and karabiner.json are in their final state. The template is
+# written as shipped and the applier owns adding or removing the line.
 sed -e "s|@TERMINAL@|$TERMINAL|g" \
     -e "s|@MUSIC@|$MUSIC|g" -e "s|@MESSENGER@|$MESSENGER|g" -e "$YAZI_LINE" \
     -e "s|@OUTER_TOP@|$OUTER_TOP|g" -e "s|@OUTER_TOP_EXT@|$OUTER_TOP_EXT|g" \
@@ -462,6 +596,13 @@ for agent in Karabiner-Menu Karabiner-NotificationWindow; do
   launchctl disable "gui/$(id -u)/org.pqrs.service.agent.$agent" 2>/dev/null || true
 done
 pkill -f "Karabiner-Menu|Karabiner-NotificationWindow" 2>/dev/null || true
+
+# The launcher choice now has one applier: it writes the live value, sets or
+# removes the AeroSpace chord, and refreshes the OmniWM rules. The generated
+# aerospace.toml above is already linked, and karabiner.json is final, so a
+# later failure cannot leave the chord and the config disagreeing.
+"$REPO_DIR/bin/omacosy-launcher-apply" "$LAUNCHER" \
+  || log "WARNING: could not apply LAUNCHER=$LAUNCHER"
 
 # theme scripts on PATH (aerospace's theme chord calls ~/.local/bin/theme-next)
 mkdir -p "$HOME/.local/bin"
@@ -592,6 +733,14 @@ if [ ! -x "$BAR_BIN" ] \
     -o "$BAR_BIN" "$REPO_DIR/helper/bar.swift"
 fi
 cp "$REPO_DIR/helper/bar-info.plist" "$BAR_APP/Contents/Info.plist"
+# The icon the banner and Finder show. Copied on every run so a new icns
+# reaches the bundle without a rebuild; touching the bundle makes
+# LaunchServices and Notification Center notice the new file.
+if [ -f "$REPO_DIR/helper/AppIcon.icns" ]; then
+  mkdir -p "$BAR_APP/Contents/Resources"
+  cp "$REPO_DIR/helper/AppIcon.icns" "$BAR_APP/Contents/Resources/AppIcon.icns"
+  touch "$BAR_APP"
+fi
 mark "built-bar-app"
 rm -f "$HOME/.local/bin/omacosy-bar"   # the pre-bundle binary, if any
 
@@ -658,11 +807,6 @@ clear_if_changed omacosy-ffm com.omacosy.ffm
 mkdir -p "$HOME/.config/omacosy"
 cp "$REPO_DIR/config/ffm-ignore" "$HOME/.config/omacosy/ffm-ignore"
 cp "$REPO_DIR/config/borders.conf" "$HOME/.config/omacosy/borders.conf"
-# app choices, RESOLVED (apps.local.conf already applied), for the same
-# reason: the bar's activity pill launches $TERMINAL and cannot read the
-# repo from a launchd agent when the clone is TCC-protected
-printf 'TERMINAL="%s"\nBROWSER="%s"\nEMAIL="%s"\nMUSIC="%s"\nMESSENGER="%s"\n' \
-  "$TERMINAL" "$BROWSER" "$EMAIL" "$MUSIC" "$MESSENGER" > "$HOME/.config/omacosy/apps.conf"
 
 cat > "$HOME/Library/LaunchAgents/com.omacosy.borders.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -737,6 +881,8 @@ link "$REPO_DIR/bin/omacosy-float" "$HOME/.local/bin/omacosy-float"
 link "$REPO_DIR/bin/omacosy-finder-window" "$HOME/.local/bin/omacosy-finder-window"
 link "$REPO_DIR/bin/omacosy-browser" "$HOME/.local/bin/omacosy-browser"
 link "$REPO_DIR/bin/omacosy-open" "$HOME/.local/bin/omacosy-open"
+link "$REPO_DIR/bin/omacosy-launcher" "$HOME/.local/bin/omacosy-launcher"
+link "$REPO_DIR/bin/omacosy-launcher-apply" "$HOME/.local/bin/omacosy-launcher-apply"
 link "$REPO_DIR/bin/omacosy-cycle" "$HOME/.local/bin/omacosy-cycle"
 
 # --- 3. omarchy theme convention -------------------------------------------

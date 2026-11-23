@@ -20,6 +20,7 @@ record_default() { # domain key
   fi
 }
 record_default NSGlobalDomain _HIHideMenuBar
+record_default NSGlobalDomain AppleMenuBarVisibleInFullscreen
 record_default NSGlobalDomain SLSMenuBarUseBlurredAppearance
 record_default com.apple.AppleMultitouchTrackpad TrackpadFourFingerVertSwipeGesture
 record_default com.apple.AppleMultitouchTrackpad TrackpadFourFingerHorizSwipeGesture
@@ -27,9 +28,14 @@ record_default com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadFourFi
 record_default com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadFourFingerHorizSwipeGesture
 record_default com.apple.dock showMissionControlGestureEnabled
 
-# One bar, not two: auto-hide the native menu bar (sketchybar takes the top).
-# cfprefsd must be killed so the OS re-reads the pref without a logout.
+# One bar, not two: auto-hide the native menu bar. Since Ventura this is a
+# pair, not one key. "Always" is _HIHideMenuBar=true AND
+# AppleMenuBarVisibleInFullscreen=false. The first key alone is "On
+# Desktop Only" when the second is already true, so the menu bar still
+# shows in fullscreen. cfprefsd must be killed so the OS re-reads the
+# pref without a logout.
 defaults write NSGlobalDomain _HIHideMenuBar -bool true
+defaults write NSGlobalDomain AppleMenuBarVisibleInFullscreen -bool false
 # "Show menu bar background": Tahoe (26.0-26.2+, unfixed) sometimes
 # reveals the auto-hidden menu bar WITHOUT its glass material — text
 # soup over whatever sits in the strip. An opaque background keeps
@@ -39,6 +45,18 @@ defaults write NSGlobalDomain SLSMenuBarUseBlurredAppearance -bool true
 killall cfprefsd 2>/dev/null || true
 sleep 1
 killall SystemUIServer 2>/dev/null || true
+# Writing the keys is not enough on macOS 27: the menu bar stays drawn in
+# the same strip as omacosy-bar until System Events applies "autohide menu
+# bar". Do this AFTER the SystemUIServer restart, which otherwise leaves
+# the bar revealed. Needs Automation for System Events; a refusal leaves
+# the keys set for the next login. Tahoe and earlier apply the defaults
+# write, so they are not prompted.
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 27 ]; then
+  if ! osascript -e 'tell application "System Events" to tell dock preferences to set autohide menu bar to true' >/dev/null; then
+    echo "macos-defaults: System Events did not hide the menu bar."
+    echo "  Grant Automation for this terminal, or log out and back in."
+  fi
+fi
 
 echo "macos-defaults: menu bar set to auto-hide (log out/in if it doesn't apply immediately)"
 
